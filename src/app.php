@@ -152,7 +152,8 @@ class App {
 	}
 
 	/**
-	 * Handles the web request.
+	 * Handles the web request. Returns false only under php -S, for a file
+	 * that php -S should serve itself.
 	 */
 	public function run() : bool {
 		// PHP's messages hold file paths, and can hold passwords, and its default
@@ -163,18 +164,22 @@ class App {
 			\ini_set( 'display_errors', '0' );
 		}
 
-		$compiled = $this->compile();
-		if ( $this->problems !== [] ) {
-			$this->report_problems();
-			return true;
-		}
-
 		$path = self::server( 'REQUEST_URI' ) ?? '/';
 		$query = '';
 		$mark = \strpos( $path, '?' );
 		if ( $mark !== false ) {
 			$query = \substr( $path, $mark );
 			$path = \substr( $path, 0, $mark );
+		}
+
+		if ( \PHP_SAPI === 'cli-server' && $this->is_static_file( $path ) ) {
+			return false;
+		}
+
+		$compiled = $this->compile();
+		if ( $this->problems !== [] ) {
+			$this->report_problems();
+			return true;
 		}
 
 		\register_shutdown_function( $this->shutdown( ... ) );
@@ -490,6 +495,37 @@ class App {
 
 		$this->error_code ??= $code;
 		return false;
+	}
+
+	// Under php -S, an existing file inside the document root, other than
+	// the script that called run(), is left for php -S to serve. realpath()
+	// resolves .. and symlinks first, so nothing outside the document root
+	// gets through.
+	//
+	// A PHP file isn't left for it, by the path's name or the file's, since
+	// php -S would run it, without the before-files. It's routed like a path
+	// for no file, so the script that called run() is the only PHP a request
+	// runs, as with the nginx configuration the README gives.
+	//
+	// The script is the file at the bottom of the call stack. The first
+	// included file is a file from auto_prepend_file when that's set, and
+	// SCRIPT_FILENAME is the requested file when it exists.
+	//
+	// realpath() would throw on a null byte, so a path with one is routed.
+	private function is_static_file( string $path ) : bool {
+		$static = false;
+		$path = \rawurldecode( $path );
+		$root = \realpath( self::server( 'DOCUMENT_ROOT' ) ?? '' );
+		if ( $root === false || \str_contains( $path, "\0" ) ) {
+			return $static;
+		}
+
+		$frames = \debug_backtrace( \DEBUG_BACKTRACE_IGNORE_ARGS );
+		$script = \end( $frames )['file'] ?? '';
+		$file = \realpath( $root . $path );
+		$static = $file !== false && $file !== $script && \is_file( $file ) && \str_starts_with( $file, $root . \DIRECTORY_SEPARATOR )
+			&& ! \str_ends_with( \strtolower( $path ), '.php' ) && ! \str_ends_with( \strtolower( $file ), '.php' );
+		return $static;
 	}
 
 	// Reads the compiled routes from the cache, or loads the routes file and

@@ -358,3 +358,21 @@ describe( 'the route cache', function() {
 		expect( $response['body'] )->toContain( "- The user PHP runs as can't write to the cache directory, so the routes would be compiled on every request. Make it writable by that user, or leave the cache option out: " . $dir . "\n" );
 	} )->skip( function_exists( 'posix_geteuid' ) && posix_geteuid() === 0, 'root can write to any directory' );
 } );
+
+describe( 'php -S', function() {
+	it( 'leaves a file in the document root for php -S to serve', function() {
+		$response = request( 'GET', '/style.css' );
+
+		expect( $response['body'] )->toBe( "body { color: teal; }\n" );
+		expect( $response['headers']['content-type'] )->toStartWith( 'text/css' );
+	} );
+
+	it( 'routes a path that only looks like a file there', function( string $path ) {
+		expect( request( 'GET', $path )['body'] )->toBe( "404 Not Found\n" );
+	} )->with( [
+		'outside the document root' => [ '/../routes.php' ],
+		'the front controller' => [ '/index.php' ],
+		'another PHP file there, which php -S would run' => [ '/other.php' ],
+		'a null byte' => [ '/style.css%00' ],
+	] );
+} );
