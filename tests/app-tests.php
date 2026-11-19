@@ -391,15 +391,35 @@ describe( 'php -S', function() {
 
 describe( 'timing', function() {
 	it( 'returns the time of each step so far from timings()', function() {
-		$timings = json_decode( request( 'GET', '/timings', [ 'before' => 'before.php' ] )['body'], true );
+		$response = request( 'GET', '/timings', [ 'before' => 'before.php' ] );
+		$timings = json_decode( $response['body'], true );
 
 		expect( array_keys( $timings ) )->toBe( [ 'total', 'route', 'before', 'handler' ] );
 		expect( min( $timings ) )->toBeGreaterThanOrEqual( 0 );
+		expect( $response['headers'] )->not->toHaveKey( 'server-timing' );
 	} );
 
-	it( 'times each template as a step of its own, until the response is finished', function() {
-		$response = request( 'GET', '/templates', [ 'templates' => __DIR__ . '/fixtures/templates' ] );
+	it( 'sends the steps that have finished in a Server-Timing header', function( string $path, array $options, array $steps ) {
+		$header = request( 'GET', $path, $options + [ 'server_timing' => true ] )['headers']['server-timing'] ?? '';
+		$metrics = array_map( fn ( string $step ) : string => 'tillkite-' . $step . ';dur=\\d+(?:\\.\\d+)?', $steps );
+
+		expect( $header )->toMatch( '{^' . implode( ', ', $metrics ) . '$}' );
+	} )->with( [
+		'after a buffered handler' => [ '/scope', [ 'before' => 'before.php' ], [ 'total', 'route', 'before', 'handler' ] ],
+		'just before an unbuffered handler' => [ '/scope', [ 'before' => 'before.php', 'buffer' => false ], [ 'route', 'before' ] ],
+		'from a handler that calls exit' => [ '/exit', [], [ 'total', 'route', 'handler' ] ],
+		'with a plain 404' => [ '/nope', [], [ 'total', 'route' ] ],
+		'after the 404 file' => [ '/nope', [ 'errors' => [ 404 => '404.php' ] ], [ 'total', 'route', 'error' ] ],
+		'after the error file for error()' => [ '/error/404', [ 'errors' => [ 404 => '404.php' ] ], [ 'total', 'route', 'handler', 'error' ] ],
+		'just before the 500 file' => [ '/throws/1', [ 'errors' => [ 500 => '500.php' ] ], [ 'route', 'handler' ] ],
+		'just before the 500 file, after the 404 file threw' => [ '/nope', [ 'errors' => [ 404 => 'throws.php', 500 => '500.php' ] ], [ 'route' ] ],
+	] );
+
+	it( 'times each template as a step of its own, without the templates it ran, until the response is finished', function() {
+		$response = request( 'GET', '/templates', [ 'templates' => __DIR__ . '/fixtures/templates', 'server_timing' => true ] );
+		$dur = ';dur=[\\d.]+';
 
 		expect( $response['body'] )->toBe( '<main>Hello, Ada</main> ["total","route","handler","template:layout.php","template:open-buffer.php"]' );
+		expect( $response['headers']['server-timing'] )->toMatch( "{^tillkite-total{$dur}, tillkite-route{$dur}, tillkite-handler{$dur}, tillkite-template;desc=\"layout.php\"{$dur}, tillkite-template;desc=\"open-buffer.php\"{$dur}$}" );
 	} );
 } );

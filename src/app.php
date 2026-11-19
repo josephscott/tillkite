@@ -35,6 +35,9 @@ class App {
 	// after it.
 	public bool $buffer = true;
 
+	// Sends the times of Tillkite's steps in a Server-Timing header.
+	public bool $server_timing = false;
+
 	// The file that runs before every handler.
 	public string $before = '';
 
@@ -54,6 +57,7 @@ class App {
 		'base' => 'string',
 		'trailing_slash' => 'bool',
 		'buffer' => 'bool',
+		'server_timing' => 'bool',
 		'before' => 'string',
 		'errors' => 'array',
 		'methods' => 'array',
@@ -136,6 +140,8 @@ class App {
 
 	// Set when run() starts.
 	private ?Timer $timer = null;
+
+	private bool $timing_sent = false;
 
 	// The output buffer level from before Tillkite's own buffer, or null when
 	// the files that are running aren't buffered.
@@ -391,11 +397,15 @@ class App {
 
 	// Runner calls it before the handler or error file. It returns false once
 	// a file has called error(), so no file after that one runs. Otherwise, it
-	// starts that step's timing.
+	// starts that step's timing. When the files aren't buffered, that file's
+	// output may send the headers, so the Server-Timing header goes out now.
 	private function next_file( string $step ) : bool {
 		$next = $this->error_code === null;
 		if ( $next ) {
 			$this->timer->next( $step );
+			if ( $this->level === null ) {
+				$this->send_timing();
+			}
 		}
 
 		return $next;
@@ -440,7 +450,10 @@ class App {
 			\http_response_code( 500 );
 		}
 
+		// The 500 file isn't buffered, so the Server-Timing header goes out
+		// before it runs.
 		$this->timer->next( 'error' );
+		$this->send_timing();
 		Runner::error_file( $this, $this->params, $error, $this->handlers . '/' . $this->errors[500] );
 	}
 
@@ -1000,18 +1013,33 @@ class App {
 			$text = $code . ' ' . self::REASONS[$code] . "\n";
 		}
 
+		$this->finish_timing();
 		\http_response_code( $code );
 		\header( 'Content-Type: text/plain; charset=utf-8' );
 		echo $text;
 	}
 
-	// Ends the timing, once the response is finished.
+	// Ends the timing, once the response is finished, and sends the
+	// Server-Timing header if it hasn't gone out.
 	private function finish_timing() : void {
 		$this->timer->stop();
+		$this->send_timing();
+	}
+
+	// Sends the Server-Timing header, with the steps that have finished, if
+	// server_timing is on, and it can still go out. It goes out only once.
+	private function send_timing() : void {
+		if ( ! $this->server_timing || $this->timing_sent || \headers_sent() ) {
+			return;
+		}
+
+		$this->timing_sent = true;
+		\header( 'Server-Timing: ' . $this->timer->header(), false );
 	}
 
 	// Runs at the end of every request that's routed. When a file called
-	// exit, or a fatal error ended the request, it ends the timing.
+	// exit, or a fatal error ended the request, it ends the timing and sends
+	// the Server-Timing header, if the headers haven't gone out.
 	//
 	// A fatal error ends the request without reaching the 500 file. What's
 	// still buffered is replaced with one line of text. When PHP displays
