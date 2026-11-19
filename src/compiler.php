@@ -57,6 +57,9 @@ final class Compiler {
 	 * Returns the compiled tables:
 	 *
 	 * - routes:  each route as written
+	 * - checks:  for each route with parameters that have a regex of their
+	 *            own, [ name => the regex a decoded value has to match too,
+	 *            or '' for none ]. See checks().
 	 * - static:  method => [ path => the match: [ 'status' => 200, ... ] ]
 	 * - dynamic: method => [ regex => [ key => the match, with the parameter
 	 *            names where their values go ] ], where the key is the
@@ -75,6 +78,7 @@ final class Compiler {
 
 		$compiled = [
 			'routes' => [],
+			'checks' => [],
 			'static' => [],
 			'dynamic' => [],
 		];
@@ -92,6 +96,10 @@ final class Compiler {
 			if ( $entry !== null ) {
 				$parsed[$index] = $entry;
 				$compiled['routes'][$index] = $entry['route'];
+				$checks = \array_merge( ...\array_column( $entry['variants'], 'checks' ) );
+				if ( $checks !== [] ) {
+					$compiled['checks'][$index] = $checks;
+				}
 			}
 		}
 
@@ -490,9 +498,9 @@ final class Compiler {
 		return $variants;
 	}
 
-	// Returns [ 'source', 'path', 'regex', 'pieces', 'names' ]. A static
-	// variant has a path and an empty regex. A dynamic one has a regex, the
-	// same regex split into pieces, and its parameter names.
+	// Returns [ 'source', 'path', 'regex', 'pieces', 'names', 'checks' ]. A
+	// static variant has a path and an empty regex. A dynamic one has a regex,
+	// the same regex split into pieces, its parameter names and their checks.
 	private function compile_variant( array $tokens ) : array {
 		$source = '';
 		$path = '';
@@ -514,6 +522,7 @@ final class Compiler {
 			'regex' => '',
 			'pieces' => [],
 			'names' => $names,
+			'checks' => $this->checks( $tokens ),
 		];
 
 		if ( $names === [] ) {
@@ -525,6 +534,32 @@ final class Compiler {
 		$variant['regex'] = \implode( '', \array_column( $pieces, 'regex' ) );
 		$variant['pieces'] = $pieces;
 		return $variant;
+	}
+
+	// The regexes that a parameter's value has to match decoded as well, by
+	// its name, for Matcher::decoded(). A route's regex sees the value still
+	// encoded, where %2E isn't a dot, so [^./]+ would let %2E%2E through.
+	//
+	// The default regex is left out, and the matcher knows a parameter
+	// without a check for one: it takes one segment, so the matcher turns
+	// away a value that decodes to more, which needs no regex in the cache
+	// for the parameters most routes have. A regex that names %, like
+	// (?:[a-z]|%[0-9A-F]{2})+, was written for the encoded form, and wouldn't
+	// match the decoded value, so its check is '', for none at all.
+	private function checks( array $tokens ) : array {
+		$checks = [];
+		foreach ( $tokens as $token ) {
+			if ( $token['type'] !== 'param' || $token['regex'] === self::DEFAULT_REGEX ) {
+				continue;
+			}
+
+			$checks[$token['name']] = '';
+			if ( ! \str_contains( $token['regex'], '%' ) ) {
+				$checks[$token['name']] = '{^(?:' . $token['regex'] . ')$}sD';
+			}
+		}
+
+		return $checks;
 	}
 
 	// Splits a dynamic variant's regex at each / in its literals, so routes

@@ -76,6 +76,19 @@ describe( 'compiled tables', function() {
 		] );
 	} );
 
+	it( 'keeps a check for each parameter with a regex of its own', function() {
+		$compiled = compile_routes( [
+			[ 'GET', '/a/{id}', 'page.php' ],
+			[ 'GET', '/b/{id:\d+}[/{slug:[a-z-]+}]', 'page.php' ],
+			[ 'GET', '/c/{v:(?:[a-z]|%[0-9A-F]{2})+}', 'page.php' ],
+		] );
+
+		expect( $compiled['checks'] )->toBe( [
+			1 => [ 'id' => '{^(?:\d+)$}sD', 'slug' => '{^(?:[a-z-]+)$}sD' ],
+			2 => [ 'v' => '' ],
+		] );
+	} );
+
 	it( 'tells more routes apart by a MARK', function() {
 		$routes = [];
 		for ( $i = 0; $i <= Tillkite\Compiler::COUNT_LEAVES; $i++ ) {
