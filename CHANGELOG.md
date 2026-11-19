@@ -50,3 +50,4 @@ All notable changes to Tillkite are recorded here. The format follows [Keep a Ch
 - GitHub Actions runs the checks on every push and pull request, on PHP 8.4 and 8.5: lint, analysis, that `dist/tillkite.php` and `App::SOURCE_HASH` are up to date, every test, and the php-fpm and Apache tests in Docker. Its token can only read the repository.
 - A route too large for PCRE to compile is reported once, without PCRE's offset, which points into Tillkite's joined regex, not the route's pattern, and differs between PCRE versions.
 - The route cache's key has a hash of Tillkite's code, so a cache that other code wrote is never read, even between releases.
+- The README: a quick start with `new`, by hand and in production, and every route, handler, template, escaping and option feature. `make apache` checks that its test site's `.htaccess` is the README's.

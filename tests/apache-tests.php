@@ -2,14 +2,19 @@
 declare( strict_types = 1 );
 
 // The php-fpm tests' site under Apache with mod_php, as many hosts run it,
-// behind its .htaccess. Tillkite reads the request with getenv(),
+// behind the README's .htaccess. Tillkite reads the request with getenv(),
 // which mod_php answers from Apache's own table, not from FastCGI's, as
 // php-fpm does. make apache runs these in Docker, and without
 // TILLKITE_APACHE=1, which it sets, they're skipped.
 $apache = getenv( 'TILLKITE_APACHE' ) === '1';
 
 describe( 'under Apache with mod_php', function() use ( $apache ) {
-	it( 'reads the request without building $_SERVER, through the .htaccess', function() {
+	// The site's .htaccess has to be the README's, so what's tested is what
+	// the README tells people to use.
+	it( "reads the request without building \$_SERVER, through the README's .htaccess", function() {
+		preg_match( '/```apache\n(.*?)```/s', (string) file_get_contents( dirname( __DIR__ ) . '/README.md' ), $readme );
+
+		expect( file_get_contents( __DIR__ . '/fixtures/fpm/public/.htaccess' ) )->toBe( $readme[1] ?? '' );
 		expect( json_decode( http( apache(), 'GET', '/users/5?a=1' )['body'], true ) )->toBe( [ 'method' => 'GET', 'uri' => '/users/5?a=1', 'params' => [ 'id' => '5' ], 'server' => false ] );
 		expect( json_decode( http( apache(), 'DELETE', '/anything' )['body'], true ) )->toBe( [ 'method' => 'DELETE', 'uri' => '/anything', 'params' => [], 'server' => false ] );
 	} )->skip( ! $apache, 'needs Apache with mod_php, which make apache runs in Docker' );
