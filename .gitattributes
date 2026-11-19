@@ -4,6 +4,7 @@
 # Left out of what Composer installs and of GitHub's archives, which is what a
 # site needs and no more, so nothing here can be run from a site's vendor/.
 /.gitattributes export-ignore
+/.github export-ignore
 /.gitignore export-ignore
 /.php-cs-fixer.dist.php export-ignore
 /Makefile export-ignore

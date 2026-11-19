@@ -1,0 +1,47 @@
+name: Tests
+
+on: [ push, pull_request ]
+
+# The jobs only read the repository, so the token they get can't write to it.
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        php-versions: [ '8.4', '8.5' ]
+    name: PHP ${{ matrix.php-versions }}
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
+
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ matrix.php-versions }}
+        coverage: none
+
+    - name: Install Dependencies
+      run: composer install
+
+    - name: Lint
+      run: make lint
+
+    - name: Analyze
+      run: make analyze
+
+    - name: Dist and App::SOURCE_HASH are up to date
+      run: make dist && git diff --exit-code -- dist/ src/app.php
+
+    - name: Tests
+      run: make tests
+
+    - name: Tests under nginx and php-fpm, in Docker
+      run: make fpm PHP=${{ matrix.php-versions }}
+
+    - name: Tests under Apache with mod_php, in Docker
+      run: make apache PHP=${{ matrix.php-versions }}
