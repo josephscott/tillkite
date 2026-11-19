@@ -22,10 +22,24 @@ final class Compiler {
 
 	public array $problems = [];
 
+	// Every route: [ 'route' => as written, 'label' => like '3', 'name' => its
+	// key in $names ].
+	private array $entries = [];
+
+	// What each route's problems start with, in the order of the routes
+	// file: [ 'Route 4', the route ]. They're exported only for a problem.
+	private array $names = [];
+
+	// The problems found, by their key in $names.
+	private array $entry_problems = [];
+
 	private bool $check_files = true;
 
 	public function compile( array $routes ) : array {
 		$this->problems = [];
+		$this->entries = [];
+		$this->names = [];
+		$this->entry_problems = [];
 
 		$compiled = [
 			'routes' => [],
@@ -35,6 +49,22 @@ final class Compiler {
 		if ( ! \array_is_list( $routes ) ) {
 			$this->problems[] = 'The routes file must return a list of routes, without keys.';
 			return $compiled;
+		}
+
+		$this->list_routes( $routes );
+		foreach ( \array_keys( $this->entries ) as $index ) {
+			$entry = $this->parse_route( $index );
+			if ( $entry !== null ) {
+				$compiled['routes'][$index] = $entry['route'];
+			}
+		}
+
+		\ksort( $this->entry_problems );
+		foreach ( $this->entry_problems as $name => $messages ) {
+			$start = $this->names[$name][0] . ' ' . $this->export( $this->names[$name][1] ) . ': ';
+			foreach ( $messages as $message ) {
+				$this->problems[] = $start . $message;
+			}
 		}
 
 		return $compiled;
@@ -67,6 +97,63 @@ final class Compiler {
 		}
 
 		return $allowed;
+	}
+
+	private function list_routes( array $routes ) : void {
+		foreach ( $routes as $position => $route ) {
+			$this->add_entry( (string) ( $position + 1 ), $route );
+		}
+	}
+
+	private function add_entry( string $label, mixed $route ) : void {
+		$this->names[] = [ 'Route ' . $label, $route ];
+		$this->entries[] = [
+			'route' => $route,
+			'label' => $label,
+			'name' => \array_key_last( $this->names ),
+		];
+	}
+
+	// Returns [ 'route' => as written ], or null when the route has problems.
+	private function parse_route( int $index ) : ?array {
+		$route = $this->entries[$index]['route'];
+		if ( ! \is_array( $route ) || ! \array_is_list( $route ) || \count( $route ) < 3 || \count( $route ) > 4 ) {
+			$this->route_problem( $index, 'each route must be [ method, pattern, file ], with optional route options' );
+			return null;
+		}
+
+		$errors = [];
+		$file = $route[2];
+		if ( ! \is_string( $file ) || $file === '' ) {
+			$errors[] = 'the file must be a file name';
+		} elseif ( ! $this->file_exists( $file ) ) {
+			$errors[] = "the file doesn't exist: " . $this->path( $file );
+		}
+
+		foreach ( $errors as $error ) {
+			$this->route_problem( $index, $error );
+		}
+
+		if ( $errors !== [] ) {
+			return null;
+		}
+
+		$parsed = [
+			'route' => $route,
+		];
+		return $parsed;
+	}
+
+	private function route_problem( int $index, string $message ) : void {
+		$this->entry_problem( $this->entries[$index]['name'], $message );
+	}
+
+	// A route's regex goes into several tables, so the same problem can come
+	// up more than once.
+	private function entry_problem( int $name, string $message ) : void {
+		if ( ! \in_array( $message, $this->entry_problems[$name] ?? [], true ) ) {
+			$this->entry_problems[$name][] = $message;
+		}
 	}
 
 	private function file_exists( string $file ) : bool {

@@ -1,7 +1,42 @@
 <?php
 declare( strict_types = 1 );
 
+describe( 'compiled tables', function() {
+	it( 'keeps each route as written, by its number', function() {
+		$compiled = compile_routes( [
+			[ 'GET', '/', 'page.php' ],
+			[ 'POST', '/users', 'page.php', [] ],
+		] );
+
+		expect( $compiled['routes'] )->toBe( [ [ 'GET', '/', 'page.php' ], [ 'POST', '/users', 'page.php', [] ] ] );
+	} );
+} );
+
 describe( 'problems', function() {
+	it( 'shows the route number and the entry as written', function() {
+		$problems = route_problems( [
+			[ 'GET', '/', 'page.php' ],
+			[ 'GET', '/users', 'missing.php', [ 'buffer' => false ] ],
+		] );
+
+		expect( $problems )->toBe( [
+			"Route 2 [ 'GET', '/users', 'missing.php', [ 'buffer' => false ] ]: the file doesn't exist: " . __DIR__ . '/fixtures/handlers/missing.php',
+		] );
+	} );
+
+	it( 'reports a malformed route', function( mixed $route, string $message ) {
+		$problems = route_problems( [ $route ] );
+
+		expect( $problems )->toHaveCount( 1 );
+		expect( $problems[0] )->toEndWith( $message );
+	} )->with( [
+		'not an array' => [ 'GET /', 'each route must be [ method, pattern, file ], with optional route options' ],
+		'too short' => [ [ 'GET', '/' ], 'each route must be [ method, pattern, file ], with optional route options' ],
+		'too long' => [ [ 'GET', '/', 'page.php', [], [] ], 'each route must be [ method, pattern, file ], with optional route options' ],
+		'keyed' => [ [ 'method' => 'GET', 'pattern' => '/', 'file' => 'page.php' ], 'each route must be [ method, pattern, file ], with optional route options' ],
+		'empty file' => [ [ 'GET', '/', '' ], 'the file must be a file name' ],
+	] );
+
 	it( 'reports a routes list with keys', function() {
 		$problems = route_problems( [ 'home' => [ 'GET', '/', 'page.php' ] ] );
 
