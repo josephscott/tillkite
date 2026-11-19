@@ -1,0 +1,13 @@
+# Built by make dist from src/, so GitHub collapses it in diffs.
+/dist/tillkite.php linguist-generated=true
+
+# Left out of what Composer installs and of GitHub's archives, which is what a
+# site needs and no more, so nothing here can be run from a site's vendor/.
+/.gitattributes export-ignore
+/.gitignore export-ignore
+/.php-cs-fixer.dist.php export-ignore
+/Makefile export-ignore
+/bin/dist.php export-ignore
+/phpstan.neon.dist export-ignore
+/phpunit.xml.dist export-ignore
+/tests export-ignore

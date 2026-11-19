@@ -38,4 +38,5 @@ All notable changes to Tillkite are recorded here. The format follows [Keep a Ch
 - `new` ends with how to run the site under `php -S`, with a `cd` quoted for the shell, and an nginx server block for production that sends every request that isn't a real file, or is for a PHP file, to `index.php`, with the `root` quoted for nginx.
 - `dist/tillkite.php`, every class in one file, for a site that doesn't use Composer: require it, then create a `Tillkite\App`. `make dist` builds it, and the tests run against it as well as `src/`.
 - `php tillkite.php new my-site` makes a site with the dist file, which it copies into the site as `lib/tillkite.php`, for `public/index.php` to require, or uses where it is when it's that file already. Required, the dist file does nothing more.
+- What Composer installs leaves out the tests and the tools for working on Tillkite, like `bin/dist.php`, so nothing in a site's `vendor/` but `bin/tillkite` can be run, and it does nothing for a web request.
 - The route cache's key has a hash of Tillkite's code, so a cache that other code wrote is never read, even between releases.
