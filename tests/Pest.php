@@ -27,3 +27,8 @@ function route_problems( array $routes, array $settings = [] ) : array {
 	$problems = $compiler->problems;
 	return $problems;
 }
+
+function make_matcher( array $routes, array $settings = [] ) : Tillkite\Matcher {
+	$matcher = new Tillkite\Matcher( compile_routes( $routes, $settings ) );
+	return $matcher;
+}
