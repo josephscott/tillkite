@@ -1,16 +1,6 @@
 <?php
 declare( strict_types = 1 );
 
-// Runs PHP with $args from the $cwd directory, and returns its exit code and
-// output.
-function run_php( array $args, string $cwd ) : array {
-	$process = proc_open( [ PHP_BINARY, ...$args ], [ [ 'file', '/dev/null', 'r' ], [ 'pipe', 'w' ], [ 'pipe', 'w' ] ], $pipes, $cwd );
-	$output = (string) stream_get_contents( $pipes[1] );
-	$errors = (string) stream_get_contents( $pipes[2] );
-	$result = [ 'code' => proc_close( $process ), 'output' => $output, 'errors' => $errors ];
-	return $result;
-}
-
 test( 'vendor/bin/tillkite new makes a site that answers its routes', function() : void {
 	// With a umask of 0, nothing it makes is writable by every user.
 	$dir = temp_dir();

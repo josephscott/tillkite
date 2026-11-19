@@ -127,28 +127,33 @@ function free_port() : int {
 // php-fpm loads dist/tillkite.php first. The php-fpm tests run only with
 // TILLKITE_FPM=1, which make fpm sets in Docker, where both
 // are installed, and need nginx and php-fpm on the PATH. With $starter, the
-// port is another server's, for a site that new makes, whose init.php fails
-// for a request with an X-Fail header, and which fpm_site() gives the path of.
-function fpm( bool $starter = false ) : int {
-	static $port = 0;
-	static $starter_port = 0;
-	if ( $port !== 0 ) {
-		$requested = $port;
-		if ( $starter ) {
-			$requested = $starter_port;
-		}
-
-		return $requested;
+// sites that new makes have servers of their own, whose ports $site names,
+// and whose paths fpm_site() gives: 'starter', which vendor/bin/tillkite
+// makes, whose init.php fails for a request with an X-Fail header, and
+// 'dist', which the test makes with dist/tillkite.php, so it isn't there
+// until then. It requires its own copy of the dist file, so it has a
+// php-fpm pool of its own, which doesn't load the dist file first.
+function fpm( string $site = 'fixture' ) : int {
+	static $ports = [];
+	if ( $ports !== [] ) {
+		return $ports[$site];
 	}
 
 	$dir = temp_dir();
-	$site = fpm_site( $dir . '/site' );
-	shell_exec( escapeshellarg( PHP_BINARY ) . ' ' . escapeshellarg( dirname( __DIR__ ) . '/bin/tillkite' ) . ' new ' . escapeshellarg( $site ) );
-	file_put_contents( $site . '/init.php', "if ( getenv( 'HTTP_X_FAIL' ) !== false ) {\n\tthrow new RuntimeException( 'the password is hunter2' );\n}\n", FILE_APPEND );
-	$starter_port = free_port();
+	$starter = fpm_site( 'starter', $dir . '/starter' );
+	shell_exec( escapeshellarg( PHP_BINARY ) . ' ' . escapeshellarg( dirname( __DIR__ ) . '/bin/tillkite' ) . ' new ' . escapeshellarg( $starter ) );
+	file_put_contents( $starter . '/init.php', "if ( getenv( 'HTTP_X_FAIL' ) !== false ) {\n\tthrow new RuntimeException( 'the password is hunter2' );\n}\n", FILE_APPEND );
+	$dist = fpm_site( 'dist', $dir . '/dist' );
 	$public = __DIR__ . '/fixtures/fpm/public';
 	$fpm_port = free_port();
-	$port = free_port();
+	$dist_fpm_port = free_port();
+	$ports = [ 'fixture' => free_port(), 'starter' => free_port(), 'dist' => free_port() ];
+	$port = $ports['fixture'];
+	$prepend = '';
+	if ( dist_file() !== '' ) {
+		$prepend = 'php_admin_value[auto_prepend_file] = ' . dist_file();
+	}
+
 	preg_match( '/--conf-path=(\S+)/', (string) shell_exec( 'nginx -V 2>&1' ), $conf );
 	$fastcgi = dirname( $conf[1] ?? '/etc/nginx/nginx.conf' ) . '/fastcgi.conf';
 	file_put_contents( $dir . '/php-fpm.conf', <<<CONF
@@ -165,6 +170,15 @@ function fpm( bool $starter = false ) : int {
 		php_admin_flag[log_errors] = on
 		php_value[display_errors] = on
 		php_admin_value[opcache.revalidate_freq] = 0
+		{$prepend}
+
+		[dist]
+		listen = 127.0.0.1:{$dist_fpm_port}
+		pm = static
+		pm.max_children = 1
+		php_admin_value[error_log] = {$dir}/dist-errors.log
+		php_admin_flag[log_errors] = on
+		php_value[display_errors] = on
 
 		CONF );
 	file_put_contents( $dir . '/nginx.conf', <<<CONF
@@ -206,8 +220,8 @@ function fpm( bool $starter = false ) : int {
 				}
 			}
 			server {
-				listen 127.0.0.1:{$starter_port};
-				root {$site}/public;
+				listen 127.0.0.1:{$ports['starter']};
+				root {$starter}/public;
 
 				location / {
 					try_files \$uri /index.php\$is_args\$args;
@@ -222,13 +236,30 @@ function fpm( bool $starter = false ) : int {
 					fastcgi_pass 127.0.0.1:{$fpm_port};
 				}
 			}
+			server {
+				listen 127.0.0.1:{$ports['dist']};
+				root {$dist}/public;
+
+				location / {
+					try_files \$uri /index.php\$is_args\$args;
+				}
+
+				location ~* \.php\$ {
+					rewrite ^ /index.php last;
+				}
+
+				location = /index.php {
+					include {$fastcgi};
+					fastcgi_pass 127.0.0.1:{$dist_fpm_port};
+				}
+			}
 		}
 
 		CONF );
 
 	$output = [ 'file', $dir . '/servers.log', 'a' ];
 	$servers = [
-		proc_open( [ 'php-fpm', '-F', '-y', $dir . '/php-fpm.conf', '-d', 'opcache.enable=1', '-d', 'auto_prepend_file=' . dist_file() ], [ [ 'file', '/dev/null', 'r' ], $output, $output ], $pipes ),
+		proc_open( [ 'php-fpm', '-F', '-y', $dir . '/php-fpm.conf', '-d', 'opcache.enable=1' ], [ [ 'file', '/dev/null', 'r' ], $output, $output ], $pipes ),
 		proc_open( [ 'nginx', '-p', $dir, '-c', $dir . '/nginx.conf', '-e', $dir . '/nginx-error.log', '-g', 'daemon off;' ], [ [ 'file', '/dev/null', 'r' ], $output, $output ], $pipes ),
 	];
 	register_shutdown_function( function() use ( $servers ) : void {
@@ -252,12 +283,7 @@ function fpm( bool $starter = false ) : int {
 	}
 
 	expect( $ready )->toBeTrue( "nginx and php-fpm didn't start:\n" . file_get_contents( $dir . '/servers.log' ) );
-	$requested = $port;
-	if ( $starter ) {
-		$requested = $starter_port;
-	}
-
-	return $requested;
+	return $ports[$site];
 }
 
 // Starts Apache with mod_php, once, on the php-fpm tests' site, whose
@@ -343,14 +369,24 @@ function apache() : int {
 	return $port;
 }
 
-// The path of the site that new makes, for fpm( true ), once $set has said.
-function fpm_site( string $set = '' ) : string {
-	static $site = '';
+// The path of a site that new makes, for fpm( $name ), once $set has said.
+function fpm_site( string $name, string $set = '' ) : string {
+	static $sites = [];
 	if ( $set !== '' ) {
-		$site = $set;
+		$sites[$name] = $set;
 	}
 
-	return $site;
+	return $sites[$name];
+}
+
+// Runs PHP with $args from the $cwd directory, and returns its exit code and
+// output.
+function run_php( array $args, string $cwd ) : array {
+	$process = proc_open( [ PHP_BINARY, ...$args ], [ [ 'file', '/dev/null', 'r' ], [ 'pipe', 'w' ], [ 'pipe', 'w' ] ], $pipes, $cwd );
+	$output = (string) stream_get_contents( $pipes[1] );
+	$errors = (string) stream_get_contents( $pipes[2] );
+	$result = [ 'code' => proc_close( $process ), 'output' => $output, 'errors' => $errors ];
+	return $result;
 }
 
 // Sends a request to the test site. $options become App's options, and $set

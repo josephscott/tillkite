@@ -57,8 +57,8 @@ describe( 'under nginx and php-fpm', function() use ( $fpm ) {
 	// With OPcache on, it has to take the old copies of what changed out. Stamps
 	// count in seconds, so each cached step waits for the next one.
 	it( 'notices edits that keep a file\'s size and modification time, in the routes file and a file it loads', function() {
-		$port = fpm( true );
-		$site = fpm_site();
+		$port = fpm( 'starter' );
+		$site = fpm_site( 'starter' );
 		$next_second = static function() : void {
 			$now = time();
 			while ( time() === $now ) {
@@ -101,11 +101,55 @@ describe( 'under nginx and php-fpm', function() use ( $fpm ) {
 	} )->skip( ! $fpm, 'needs nginx and php-fpm, which make fpm runs in Docker' );
 
 	it( 'keeps PHP out of the site that new makes, even when its init.php fails', function() {
-		$page = http( fpm( true ), 'GET', '/' );
-		$failed = http( fpm( true ), 'GET', '/', [ 'X-Fail' => '1' ] );
+		$page = http( fpm( 'starter' ), 'GET', '/' );
+		$failed = http( fpm( 'starter' ), 'GET', '/', [ 'X-Fail' => '1' ] );
 
 		expect( $page['status'] )->toBe( 200 );
 		expect( $page['headers'] )->not->toHaveKey( 'x-powered-by' );
 		expect( [ $failed['status'], $failed['body'] ] )->toBe( [ 500, '' ] );
+	} )->skip( ! $fpm, 'needs nginx and php-fpm, which make fpm runs in Docker' );
+
+	// A site without Composer, as it's made and served in production, with
+	// a route whose handler throws, for the 500 page.
+	it( 'makes a site with php tillkite.php new that answers its pages under nginx and php-fpm', function() {
+		$port = fpm( 'dist' );
+		$site = fpm_site( 'dist' );
+		$made = run_php( [ dirname( __DIR__ ) . '/dist/tillkite.php', 'new', $site ], dirname( $site ) );
+		expect( $made['code'] )->toBe( 0 );
+		expect( $made['output'] )->toContain( "\n  public/index.php\n" )->toContain( "\n  lib/tillkite.php\n" );
+		expect( file_get_contents( $site . '/lib/tillkite.php' ) )->toBe( file_get_contents( dirname( __DIR__ ) . '/dist/tillkite.php' ) );
+
+		file_put_contents( $site . '/routes.php', str_replace( "'hello.php' ],", "'hello.php' ],\n\t[ 'GET', '/boom', 'boom.php' ],", (string) file_get_contents( $site . '/routes.php' ) ) );
+		file_put_contents( $site . '/handlers/boom.php', "<?php throw new LogicException( 'the password is hunter2' );\n" );
+
+		$home = http( $port, 'GET', '/' );
+		expect( [ $home['status'], $home['headers']['x-content-type-options'] ?? '' ] )->toBe( [ 200, 'nosniff' ] );
+		expect( $home['headers'] )->not->toHaveKey( 'x-powered-by' );
+		expect( $home['body'] )->toContain( '<title>It works</title>' );
+		expect( http( $port, 'GET', '/hello/Ada%20%3Cb%3E' )['body'] )->toContain( '<h1>Hello, Ada &lt;b&gt;</h1>' );
+		expect( http( $port, 'GET', '/style.css' )['body'] )->toContain( 'color-scheme' );
+
+		$missing = http( $port, 'GET', '/nope' );
+		expect( [ $missing['status'], $missing['headers']['referrer-policy'] ?? '' ] )->toBe( [ 404, 'strict-origin-when-cross-origin' ] );
+		expect( $missing['body'] )->toContain( '<code>/nope</code>' );
+
+		$post = http( $port, 'POST', '/' );
+		expect( [ $post['status'], $post['headers']['allow'] ?? '' ] )->toBe( [ 405, 'GET, HEAD' ] );
+		expect( $post['body'] )->toContain( 'take POST requests' );
+
+		// The copy of Tillkite is outside public/, and nginx sends a request
+		// for any PHP file to index.php, which has no route for it.
+		expect( http( $port, 'GET', '/lib/tillkite.php' )['status'] )->toBe( 404 );
+		expect( http( $port, 'GET', '/index.php' )['status'] )->toBe( 404 );
+
+		// Outside php -S, the 500 page leaves the exception out, and the log
+		// has it.
+		$boom = http( $port, 'GET', '/boom' );
+		expect( $boom['status'] )->toBe( 500 );
+		expect( $boom['body'] )->toContain( 'Something went wrong.' );
+		expect( $boom['body'] )->not->toContain( 'hunter2' );
+		expect( (string) file_get_contents( dirname( $site ) . '/dist-errors.log' ) )->toContain( 'LogicException: the password is hunter2' );
+
+		expect( glob( $site . '/var/tillkite-*.php' ) )->toHaveCount( 1 );
 	} )->skip( ! $fpm, 'needs nginx and php-fpm, which make fpm runs in Docker' );
 } );
