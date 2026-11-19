@@ -10,6 +10,7 @@ return [
 	[ 'GET', '/ends-buffer', 'ends-buffer.php' ],
 	[ 'GET', '/error/{code}', 'error.php' ],
 	[ 'GET', '/throws/{id}', 'throws.php' ],
+	[ 'GET', '/fatal/{kind}/{display}', 'fatal.php' ],
 	// A long run of a's and no match runs into PCRE's backtrack limit.
 	[ 'GET', '/backtrack/{v:(?:a|aa)+}', 'text.php' ],
 ];

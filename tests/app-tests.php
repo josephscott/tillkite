@@ -224,3 +224,22 @@ describe( 'the 500 file', function() {
 		expect( [ $response['status'], $response['body'] ] )->toBe( [ 500, 'the 500 page: boom [["tillkite","params","error"],[]]' ] );
 	} );
 } );
+
+// A fatal error ends the request without reaching the 500 file.
+describe( 'fatal errors', function() {
+	it( 'replace the buffered output with one line of text', function( string $kind ) {
+		$response = request( 'GET', '/fatal/' . $kind . '/0' );
+
+		expect( [ $response['status'], $response['body'] ] )->toBe( [ 500, "500 Internal Server Error\n" ] );
+	} )->with( [
+		'running out of memory' => [ 'memory' ],
+		'an uncaught exception, with no 500 file' => [ 'exception' ],
+	] );
+
+	it( "keep PHP's message when display_errors is on", function() {
+		$response = request( 'GET', '/fatal/exception/1' );
+
+		expect( $response['status'] )->toBe( 500 );
+		expect( $response['body'] )->toStartWith( 'partial' )->toContain( 'Uncaught RuntimeException: boom' );
+	} );
+} );

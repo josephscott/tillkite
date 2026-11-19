@@ -80,6 +80,14 @@ class App {
 		500 => 'Internal Server Error',
 	];
 
+	// The errors that end a request without an exception, such as running
+	// out of memory or time, or an uncaught exception with no 500 file.
+	//
+	// The leading \ lets PHP work out the value when it compiles the class.
+	// In a namespace, E_ERROR could be Tillkite\E_ERROR, so without it PHP
+	// works it out at run time, on the first new App() of every request.
+	private const int FATAL_ERRORS = \E_ERROR | \E_PARSE | \E_CORE_ERROR | \E_COMPILE_ERROR | \E_USER_ERROR | \E_RECOVERABLE_ERROR;
+
 	private array $problems = [];
 
 	// The parameters of the files that are running, for the error files.
@@ -152,6 +160,7 @@ class App {
 			$path = \substr( $path, 0, $mark );
 		}
 
+		\register_shutdown_function( $this->shutdown( ... ) );
 		$this->respond( $compiled, self::server( 'REQUEST_METHOD' ) ?? 'GET', $path, $query );
 		return true;
 	}
@@ -514,5 +523,29 @@ class App {
 		\http_response_code( $code );
 		\header( 'Content-Type: text/plain; charset=utf-8' );
 		echo $text;
+	}
+
+	// Runs at the end of every request that's routed. A fatal error ends the
+	// request without reaching the 500 file. What's still buffered is replaced
+	// with one line of text. When PHP displays errors, which takes php -S, a
+	// host that keeps run() from turning them off, or a file that turns them
+	// back on, its message is in that output, so the output stays and only
+	// the status changes. Running out of memory, PHP throws the buffers away
+	// itself, and with display_errors on, it has sent its message, and a 200,
+	// before this runs.
+	private function shutdown() : void {
+		$error = \error_get_last();
+		if ( $error === null || ( $error['type'] & self::FATAL_ERRORS ) === 0 || \headers_sent() ) {
+			return;
+		}
+
+		$display = \strtolower( (string) \ini_get( 'display_errors' ) );
+		if ( ! \in_array( $display, [ '', '0', 'off', 'no', 'false' ], true ) ) {
+			\http_response_code( 500 );
+			return;
+		}
+
+		$this->discard_output();
+		$this->plain( 500 );
 	}
 }
