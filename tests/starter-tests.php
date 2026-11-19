@@ -19,7 +19,7 @@ test( 'vendor/bin/tillkite new makes a site that answers its routes', function()
 	umask( $umask );
 	expect( $made['code'] )->toBe( 0 );
 	expect( [ fileperms( $dir . '/my-site/var' ) & 0o777, fileperms( $dir . '/my-site/handlers/home.php' ) & 0o777 ] )->toBe( [ 0o775, 0o664 ] );
-	expect( $made['output'] )->toBe( "Made a Tillkite site in my-site:\n\n  init.php\n  public/index.php\n  public/style.css\n  routes.php\n  handlers/before.php\n  handlers/home.php\n  handlers/hello.php\n  handlers/404.php\n  handlers/405.php\n  handlers/500.php\n  templates/layout.php\n  var/.gitignore\n" );
+	expect( $made['output'] )->toContain( "  cd my-site\n  php -S localhost:8000 -t public public/index.php\n" );
 
 	// A route whose handler throws, for the 500 page.
 	$site = $dir . '/my-site';
@@ -85,4 +85,18 @@ test( 'new writes nothing when any file it would make is there', function() : vo
 	expect( scandir( $dir . '/mine' ) )->toBe( [ '.', '..' ] );
 	expect( scandir( $dir . '/handlers' ) )->toBe( [ '.', '..', 'home.php' ] );
 	expect( file_get_contents( $dir . '/routes.php' ) )->toBe( 'mine' );
+} );
+
+test( 'new quotes the nginx root, gives a path nginx cannot take a stand-in, and puts ./ before a name cd would take as an option', function() : void {
+	$dir = temp_dir();
+	$quoted = run_php( [ dirname( __DIR__ ) . '/bin/tillkite', 'new', 'a b;#"' ], $dir );
+	expect( $quoted['output'] )->toContain( '      root "' . addcslashes( realpath( $dir ) . '/a b;#"/public', '"\\' ) . "\";\n" );
+
+	// nginx has no escape for $, which starts a variable.
+	$dollar = run_php( [ dirname( __DIR__ ) . '/bin/tillkite', 'new', 'x$host' ], $dir );
+	expect( $dollar['output'] )->toContain( "      root /path/to/public;\n" );
+	expect( $dollar['output'] )->not->toContain( 'x$host/public' );
+
+	// cd takes a name that starts with - as an option.
+	expect( run_php( [ dirname( __DIR__ ) . '/bin/tillkite', 'new', '-P' ], $dir )['output'] )->toContain( "\n  cd ./-P\n" );
 } );

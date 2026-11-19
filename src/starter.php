@@ -89,12 +89,7 @@ final class Starter {
 			return 1;
 		}
 
-		$where = $dir;
-		if ( $dir === '.' ) {
-			$where = 'this directory';
-		}
-
-		echo 'Made a Tillkite site in ' . $where . ":\n\n  " . \implode( "\n  ", \array_keys( $files ) ) . "\n";
+		echo self::next_steps( $dir, $root, \array_keys( $files ) );
 		return 0;
 	}
 
@@ -159,6 +154,62 @@ final class Starter {
 		$path = \str_repeat( '/..', \count( $from ) - $same ) . '/' . \implode( '/', \array_slice( $to, $same ) );
 		$php = '__DIR__ . ' . \var_export( $path, true );
 		return $php;
+	}
+
+	private static function next_steps( string $dir, string $root, array $paths ) : string {
+		// cd takes a name that starts with - as an option, quoted or not, so
+		// it gets ./ in front.
+		$where = $dir;
+		$cd = '';
+		$arg = $dir;
+		if ( \str_starts_with( $dir, '-' ) ) {
+			$arg = './' . $dir;
+		}
+
+		if ( $dir === '.' ) {
+			$where = 'this directory';
+		} elseif ( \preg_match( '{^[\w./-]+$}D', $arg ) === 1 ) {
+			$cd = '  cd ' . $arg . "\n";
+		} else {
+			$cd = '  cd ' . \escapeshellarg( $arg ) . "\n";
+		}
+
+		// In quotes, nginx reads a space, ; { } or # in the path as part of it,
+		// and \ escapes " and \. It has no escape for $, which starts a
+		// variable, and a control character can't be in a directive, so a
+		// path with one gets a stand-in, and a comment that says why.
+		$public = $root . \DIRECTORY_SEPARATOR . 'public';
+		$nginx_root = '      root "' . \addcslashes( $public, '"\\' ) . "\";\n";
+		if ( \preg_match( '/[$\x00-\x1F\x7F]/', $public ) === 1 ) {
+			$nginx_root = "      # nginx reads a \$ in a path as a variable, and can't take a control\n"
+				. "      # character, so give it a path to public/ without one, like a symlink.\n"
+				. "      root /path/to/public;\n";
+		}
+
+		$steps = 'Made a Tillkite site in ' . $where . ":\n\n  " . \implode( "\n  ", $paths ) . "\n\n"
+			. "Run it with PHP's built-in server:\n\n"
+			. $cd
+			. "  php -S localhost:8000 -t public public/index.php\n\n"
+			. "Then open http://localhost:8000. Each page is a file in handlers/, and\n"
+			. "routes.php says which URL runs which one. What public/index.php and\n"
+			. "any script you add share, like a database connection, goes in\n"
+			. "init.php, which they both require.\n\n"
+			. "In production, point nginx at public/, and send every request that isn't\n"
+			. "a real file, or is for a PHP file, to index.php through php-fpm:\n\n"
+			. "  server {\n"
+			. $nginx_root . "\n"
+			. "      location / {\n"
+			. "          try_files \$uri /index.php\$is_args\$args;\n"
+			. "      }\n\n"
+			. "      location ~* \\.php\$ {\n"
+			. "          rewrite ^ /index.php last;\n"
+			. "      }\n\n"
+			. "      location = /index.php {\n"
+			. "          include fastcgi.conf;\n"
+			. "          fastcgi_pass unix:/run/php/php-fpm.sock;\n"
+			. "      }\n"
+			. "  }\n";
+		return $steps;
 	}
 
 	// The site's files, by their paths in it. {autoload} in init.php is
