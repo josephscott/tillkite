@@ -4,9 +4,14 @@ parameters:
 		- src
 		- tests
 		- bin
+		- example
 		- .php-cs-fixer.dist.php
 	excludePaths:
 		# Handlers only run inside App, which gives them $tillkite and $params,
 		# and templates inside template(), which gives them $tillkite and $data.
 		- tests/fixtures/site/handlers
 		- tests/fixtures/templates
+		- example/handlers
+		- example/templates
+		# The example site's route cache.
+		- example/var

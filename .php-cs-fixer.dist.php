@@ -7,7 +7,7 @@ $fixer_config = new JosephScott\PHPCSFixer_Config( __DIR__ );
 // \strlen() and \PHP_SAPI. Without it, PHP looks for Tillkite\strlen() first,
 // on every request, can't compile calls like strlen() to faster opcodes, and
 // works out class constants like E_ERROR | E_PARSE on every request. Code in
-// the global namespace, like the tests, doesn't need it.
+// the global namespace, like the tests and the example site, doesn't need it.
 $fixer_config->rules['native_function_invocation'] = [
 	'include' => [ '@internal' ],
 	'scope' => 'namespaced',
@@ -19,9 +19,11 @@ $fixer_config->rules['native_constant_invocation'] = [
 
 $config = $fixer_config->get_config();
 
-// dist/tillkite.php, which make dist builds from files that are fixed.
+// Generated files: the route cache's, from the example site and the tests,
+// and dist/tillkite.php, which make dist builds from files that are fixed.
 $finder = $fixer_config->finder;
 if ( $finder instanceof PhpCsFixer\Finder ) {
+	$finder->notName( '/^tillkite-[0-9a-f]{32}\.php$/' );
 	// The shared config makes each top-level directory a root of its own, so
 	// excluding the dist directory alone misses the files directly in it.
 	$finder->notPath( '#^(dist/)?tillkite\.php$#' );

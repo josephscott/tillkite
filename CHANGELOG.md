@@ -39,4 +39,5 @@ All notable changes to Tillkite are recorded here. The format follows [Keep a Ch
 - `dist/tillkite.php`, every class in one file, for a site that doesn't use Composer: require it, then create a `Tillkite\App`. `make dist` builds it, and the tests run against it as well as `src/`.
 - `php tillkite.php new my-site` makes a site with the dist file, which it copies into the site as `lib/tillkite.php`, for `public/index.php` to require, or uses where it is when it's that file already. Required, the dist file does nothing more.
 - What Composer installs leaves out the tests and the tools for working on Tillkite, like `bin/dist.php`, so nothing in a site's `vendor/` but `bin/tillkite` can be run, and it does nothing for a web request.
+- An example site, in `example/`, which `make serve` runs: static and dynamic routes, a before-file whose variable the handler gets, error pages, a layout made of templates, the route that matched on each page, and in development, a stack trace and the `Server-Timing` header.
 - The route cache's key has a hash of Tillkite's code, so a cache that other code wrote is never read, even between releases.

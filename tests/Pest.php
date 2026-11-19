@@ -85,6 +85,21 @@ function site() : array {
 	return $site;
 }
 
+// The same for the example site, which starts with no route cache. Its test
+// checks that it writes one, and a cache left in example/var by a copy of
+// the repository at another path, which the example doesn't remove, since
+// it's for another routes file, would be counted too.
+function example() : array {
+	static $cleared = false;
+	if ( ! $cleared ) {
+		array_map( unlink( ... ), glob( dirname( __DIR__ ) . '/example/var/tillkite-*.php' ) ?: [] );
+		$cleared = true;
+	}
+
+	$example = serve( dirname( __DIR__ ) . '/example/public' );
+	return $example;
+}
+
 // Starts php -S on a document root, with its index.php as the router, once
 // for each document root. PHP's own output buffer is off, as it is by
 // default, so only Tillkite's buffering decides when headers go out.

@@ -29,7 +29,7 @@ style: ## Fix any style issues
 lint: ## Check if the code is valid
 	@echo
 	@echo "--> Lint"
-	find . -name '*.php' -not -path './vendor/*' -not -path './.git/*' -print0 | xargs -0 php -l
+	find . -name '*.php' -not -path './vendor/*' -not -path './.git/*' -not -path './example/var/*' -print0 | xargs -0 php -l
 	@echo
 
 .PHONY: analyze
@@ -55,3 +55,17 @@ tests: dist ## Pest tests, against src/ and then dist/tillkite.php
 	@echo "--> Tests: Pest, against dist/tillkite.php"
 	TILLKITE_DIST=1 vendor/bin/pest
 	@echo
+
+.PHONY: serve
+serve: ## Run the example site at http://localhost:8417
+	@echo
+	@echo "--> Serve: the example site at http://localhost:8417"
+	php -S localhost:8417 -t example/public example/public/index.php
+
+.PHONY: serve-dist
+serve-dist: dist ## Run the example site on dist/tillkite.php at http://localhost:8418
+	@echo
+	@echo "--> Serve: the example site on dist/tillkite.php at http://localhost:8418"
+	# The dist file's classes exist before index.php runs, so the autoloader
+	# never loads src/.
+	php -d auto_prepend_file=dist/tillkite.php -S localhost:8418 -t example/public example/public/index.php
