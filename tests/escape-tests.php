@@ -32,6 +32,13 @@ function shown( string $value ) : string {
 	return $shown;
 }
 
+// What a CSS parser makes of css() output's escapes, each of which takes in
+// one whitespace character after it.
+function css_decoded( string $css ) : string {
+	$decoded = (string) preg_replace_callback( '/\\\\([0-9A-F]{6})[ \t\n\r\f]?/', fn ( array $hex ) : string => (string) mb_chr( (int) hexdec( $hex[1] ), 'UTF-8' ), $css );
+	return $decoded;
+}
+
 it( 'gives back each value from html() as text and in a quoted attribute, and from html_attr() in an unquoted one too', function( string $method, array $places ) {
 	$markup = [
 		'text' => fn ( string $v ) : string => '<div>' . $v . '</div>',
@@ -92,6 +99,51 @@ it( 'gives back a URL with a scheme it allows, or none, in quoted and unquoted a
 	'a colon after a slash' => [ './javascript:alert(1)', [ 'http', 'https', 'mailto', 'tel' ] ],
 	'a scheme added' => [ 'ftp://example.com/', [ 'ftp' ] ],
 ] );
+
+// A string holds only letters, digits, \ escapes and characters outside
+// ASCII, so nothing in it can end the string, or end the script, even inside
+// quotes written around it, and outside its strings there's only JSON's own
+// punctuation. That's what makes it safe in <script> and as JSON.
+it( 'gives JSON that decodes to the value, with only letters, digits and escapes in its strings', function() {
+	$values = [ ...ATTACKS, "in\xC2\xA0new\xE2\x80\x80f\xE3\x80\x80in", [ 'list' => [ 1, -2.5, 1e100, PHP_INT_MAX, true, false, null, '' ], 'a "b"' => [ '</script>' => "x\xffy" ] ], [], 0, 'x' ];
+	foreach ( $values as $value ) {
+		$js = Esc::js( $value );
+		$expected = json_decode( (string) json_encode( $value, JSON_INVALID_UTF8_SUBSTITUTE ), true );
+		expect( json_decode( $js, true ) )->toBe( $expected );
+
+		preg_match_all( '/"([^"]*)"/', $js, $strings );
+		foreach ( $strings[1] as $string ) {
+			expect( $string )->toMatch( '/^(?:[a-zA-Z0-9]|\\\\[a-zA-Z0-9\\\\])*$/' );
+		}
+
+		expect( (string) preg_replace( '/"[^"]*"/', '', $js ) )->toMatch( '/^[a-zA-Z0-9{}\[\]:,\-+.]*$/' );
+
+		$document = parse_html( '<script>x = ' . $js . ';</script><p id="after"></p>' );
+		expect( $document->querySelector( 'script' )->textContent )->toBe( 'x = ' . $js . ';' );
+		expect( $document->getElementById( 'after' ) )->not->toBeNull();
+	}
+} );
+
+it( 'encodes objects in js(), and logs what JSON cannot hold', function() {
+	$object = new stdClass();
+	$object->name = 'Ann <b>';
+	expect( Esc::js( [ 'o' => $object ] ) )->toBe( '{"o":{"name":"Ann\\u0020\\u003Cb\\u003E"}}' );
+
+	$log = logged( function() {
+		expect( Esc::js( [ 'a' => INF, 'b' => 1 ] ) )->toBe( '{"a":0,"b":1}' );
+	} );
+	expect( $log )->toContain( 'Tillkite: Escape::js() could not encode all of its value: Inf and NaN cannot be JSON encoded' );
+} );
+
+// The space after it is there because an escape at the end of css()'s output
+// must not take in the space written after it.
+it( 'gives CSS with only letters, digits, six-digit escapes and characters outside ASCII, and no digit first, which decodes to the text', function() {
+	foreach ( [ ...ATTACKS, '1abc', 'a_', '0' ] as $value ) {
+		$css = Esc::css( $value );
+		expect( $css )->toMatch( '/^(?![0-9])(?:[a-zA-Z0-9\x80-\xff]|\\\\[0-9A-F]{6})* ?$/' );
+		expect( css_decoded( $css . ' x' ) )->toBe( shown( $value ) . ' x' );
+	}
+} );
 
 // What a terminal or an editor could take as a command, a new entry, or
 // text in another order, comes out as an escape. The rest stays as it is.
