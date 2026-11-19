@@ -81,8 +81,8 @@ bench: ## Compare Tillkite with FastRoute, Symfony Routing and RadixRouter
 # ### #
 ##@ Docker: nothing to install but Docker
 
-# The PHP versions that make matrix checks, and the one that make fpm and
-# make apache run, like: make fpm PHP=8.4
+# The PHP versions that make matrix checks, and the one that make load,
+# make fpm and make apache run, like: make load PHP=8.4
 PHP_VERSIONS = 8.4 8.5
 PHP ?= 8.5
 
@@ -97,6 +97,14 @@ docker_run = docker run --rm -v "$(CURDIR)":/src:ro -v tillkite-vendor-$(1):/wor
 # The same for the image with Apache and mod_php, tagged tillkite-apache:VERSION.
 docker_apache_image = docker build -q --target apache --build-arg PHP_VERSION=$(1) -t tillkite-apache:$(1) docker > /dev/null
 docker_apache_run = docker run --rm -v "$(CURDIR)":/src:ro -v tillkite-vendor-$(1):/work/vendor $(2) tillkite-apache:$(1) /src/docker/run.sh
+
+.PHONY: load
+load: ## HTTP load test with nginx, php-fpm and oha, in Docker. PHP=8.4 picks the PHP version
+	@echo
+	@echo "--> Load: nginx, php-fpm and oha, in Docker, on PHP $(PHP)"
+	$(call docker_image,$(PHP))
+	$(call docker_run,$(PHP),-e LOAD_SECONDS -e LOAD_CONNECTIONS -e LOAD_WORKERS) php bench/load.php
+	@echo
 
 .PHONY: fpm
 fpm: ## Tests under nginx and php-fpm, in Docker, against src/ and dist/tillkite.php. PHP=8.4 picks the PHP version

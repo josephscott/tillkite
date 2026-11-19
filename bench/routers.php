@@ -29,7 +29,7 @@ interface Router {
 	public function match( object $router, string $method, string $path ) : int;
 }
 
-// The routers make bench compares, by name. Tillkite's handler
+// The routers make bench and make load compare, by name. Tillkite's handler
 // file goes in $handlers.
 function routers( string $handlers ) : array {
 	$routers = [

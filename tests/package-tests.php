@@ -3,12 +3,13 @@ declare( strict_types = 1 );
 
 // In a checkout under a document root, a request shouldn't run these. php -S
 // runs a .php file under its document root, and takes bin/tillkite as its
-// router. A time limit keeps one that does run from running long.
+// router. A time limit keeps one that does run from running long, and with no
+// PATH, bench/load.php can't find the nginx and php-fpm it would leave running.
 test( "the repository's scripts don't run for a web request", function( string $target, array $server ) : void {
 	$root = dirname( __DIR__ );
 	$port = free_port();
 	$command = [ PHP_BINARY, '-d', 'max_execution_time=2', '-d', 'display_errors=0', '-d', 'register_argc_argv=1', '-S', '127.0.0.1:' . $port, '-t', $root, ...$server ];
-	$process = proc_open( $command, [ [ 'file', '/dev/null', 'r' ], [ 'file', '/dev/null', 'w' ], [ 'file', '/dev/null', 'w' ] ], $pipes, $root );
+	$process = proc_open( $command, [ [ 'file', '/dev/null', 'r' ], [ 'file', '/dev/null', 'w' ], [ 'file', '/dev/null', 'w' ] ], $pipes, $root, [ 'PATH' => '' ] );
 	register_shutdown_function( static function() use ( $process ) : void {
 		proc_terminate( $process );
 	} );
@@ -34,5 +35,7 @@ test( "the repository's scripts don't run for a web request", function( string $
 } )->with( [
 	'bin/dist.php' => [ '/bin/dist.php', [] ],
 	'bench/run.php' => [ '/bench/run.php', [] ],
+	'bench/load.php' => [ '/bench/load.php', [] ],
+	'bench/load-front.php' => [ '/bench/load-front.php', [] ],
 	'bin/tillkite' => [ '/?new+made-by-a-request', [ 'bin/tillkite' ] ],
 ] );
