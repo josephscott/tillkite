@@ -21,6 +21,9 @@ class App {
 	// an absolute path. Empty means the directory of the routes file.
 	public string $handlers = '';
 
+	// The URL prefix the app is mounted under, like /app.
+	public string $base = '';
+
 	// false: URLs never end in /. true: they always do.
 	public bool $trailing_slash = false;
 
@@ -43,6 +46,7 @@ class App {
 		'routes' => 'string',
 		'cache' => 'string',
 		'handlers' => 'string',
+		'base' => 'string',
 		'trailing_slash' => 'bool',
 		'buffer' => 'bool',
 		'before' => 'string',
@@ -188,8 +192,7 @@ class App {
 			$before = $this->handlers . '/' . $this->before;
 		}
 
-		$matcher = new Matcher( $compiled );
-		$result = $matcher->match( $method, $path );
+		$result = $this->match( $compiled, $method, $path );
 		if ( $result['status'] === 200 ) {
 			$this->run_route( $before, $this->handlers . '/' . $compiled['routes'][$result['route']][2], $result['params'] );
 			return;
@@ -206,6 +209,36 @@ class App {
 		}
 
 		$this->miss( $result, $query );
+	}
+
+	// Removes base from the path, then matches the path. With base set, the
+	// root URL is /app or /app/, following trailing_slash, and the other form
+	// redirects to it.
+	private function match( array $compiled, string $method, string $path ) : array {
+		$result = [ 'status' => 404 ];
+		if ( $this->base !== '' ) {
+			$root = '';
+			if ( $this->trailing_slash ) {
+				$root = '/';
+			}
+
+			if ( $path === $this->base || $path === $this->base . '/' ) {
+				if ( $path !== $this->base . $root ) {
+					$result = [ 'status' => 308, 'path' => $root ];
+					return $result;
+				}
+
+				$path = '/';
+			} elseif ( \str_starts_with( $path, $this->base . '/' ) ) {
+				$path = \substr( $path, \strlen( $this->base ) );
+			} else {
+				return $result;
+			}
+		}
+
+		$matcher = new Matcher( $compiled );
+		$result = $matcher->match( $method, $path );
+		return $result;
 	}
 
 	// Runs the before-file and the handler.
@@ -264,7 +297,7 @@ class App {
 	private function miss( array $result, string $query ) : void {
 		$status = $result['status'];
 		if ( $status === 308 ) {
-			$location = $result['path'];
+			$location = $this->base . $result['path'];
 			if ( ! \str_starts_with( $location, '//' ) && ! \str_starts_with( $location, '/\\' ) ) {
 				\http_response_code( 308 );
 				\header( 'Location: ' . \preg_replace_callback( '/[^\x21-\x7E]/', static fn ( array $byte ) : string => \rawurlencode( $byte[0] ), $location . $query ) );
@@ -463,6 +496,10 @@ class App {
 	// compiles it. Every problem found goes into $problems.
 	private function compile() : array {
 		$compiled = [];
+		if ( $this->base !== '' && ( ! \str_starts_with( $this->base, '/' ) || \str_ends_with( $this->base, '/' ) ) ) {
+			$this->problems[] = 'The base option must start with / and not end with /, like /app: ' . $this->base;
+		}
+
 		if ( $this->routes === '' ) {
 			$this->problems[] = 'The routes option is required.';
 			return $compiled;

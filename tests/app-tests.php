@@ -31,6 +31,7 @@ describe( 'configuration problems', function() {
 		'relative routes' => [ [ 'routes' => 'routes.php' ], 'The routes option must be an absolute path, built from __DIR__: routes.php' ],
 		'relative handlers' => [ [ 'handlers' => 'handlers' ], 'The handlers option must be an absolute path, built from __DIR__: handlers' ],
 		'relative cache' => [ [ 'cache' => 'var' ], 'The cache option must be an absolute path, built from __DIR__: var' ],
+		'a base that ends in /' => [ [ 'base' => '/app/' ], 'The base option must start with / and not end with /, like /app: /app/' ],
 		'missing routes file' => [ [ 'routes' => '/nowhere/routes.php' ], "The routes file doesn't exist: /nowhere/routes.php" ],
 		'not an array' => [ [ 'routes' => __DIR__ . '/fixtures/handlers/page.php' ], 'The routes file must return an array of routes, not int' ],
 	] );
@@ -151,6 +152,27 @@ describe( 'routing', function() {
 		expect( request( 'GET', '/nope', [ 'before' => 'prints-before.php' ] )['body'] )->toBe( "404 Not Found\n" );
 		expect( request( 'GET', '/', [ 'before' => 'prints-before.php' ] )['body'] )->toBe( 'before text' );
 	} );
+} );
+
+describe( 'base', function() {
+	it( 'removes base before matching, and sends a 404 outside it', function() {
+		$options = [ 'base' => '/app' ];
+
+		expect( request( 'GET', '/app/users/5', $options )['body'] )->toBe( '{"id":"5"}' );
+		expect( request( 'GET', '/users/5', $options )['status'] )->toBe( 404 );
+		expect( request( 'GET', '/application', $options )['status'] )->toBe( 404 );
+	} );
+
+	it( 'redirects the root URL to the form trailing_slash asks for', function( bool $trailing_slash, string $root, string $other ) {
+		$options = [ 'base' => '/app', 'trailing_slash' => $trailing_slash, 'routes' => SITE . '/root-routes.php' ];
+		$redirect = request( 'GET', $other . '?a=1', $options );
+
+		expect( request( 'GET', $root, $options )['body'] )->toBe( 'text' );
+		expect( [ $redirect['status'], $redirect['headers']['location'] ] )->toBe( [ 308, $root . '?a=1' ] );
+	} )->with( [
+		'without the slash' => [ false, '/app', '/app/' ],
+		'with the slash' => [ true, '/app/', '/app' ],
+	] );
 } );
 
 describe( 'error()', function() {
