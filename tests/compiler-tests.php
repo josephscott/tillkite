@@ -54,11 +54,15 @@ describe( 'problems', function() {
 		$problems = route_problems( [ [ 'GET', $pattern, 'page.php' ] ] );
 
 		expect( $problems )->toHaveCount( 1 );
-		expect( $problems[0] )->toEndWith( $message );
+		expect( $problems[0] )->toContain( $message );
 	} )->with( [
 		'no leading slash' => [ 'users', 'the pattern must start with /' ],
 		'unclosed brace' => [ '/users/{id', 'unbalanced { } in the pattern' ],
 		'stray brace' => [ '/users/id}', 'unbalanced { } in the pattern' ],
+		'capturing group' => [ '/users/{id:(\d+)}', 'the regex in {id:(\d+)} has a capturing group; use (?:...) instead' ],
+		'verb' => [ '/users/{id:\d+(*ACCEPT)}', "the regex in {id:\d+(*ACCEPT)} has a (*...) verb, which parameters can't use" ],
+		'invalid regex' => [ '/users/{id:[}', "the regex in {id:[} doesn't compile: Compilation failed: missing terminating ]" ],
+		'regex escaping its group' => [ '/users/{id:a)|(?:b}', "the regex in {id:a)|(?:b} doesn't compile: Compilation failed: unmatched closing parenthesis" ],
 		'empty regex' => [ '/users/{id:}', 'empty regex in {id:}' ],
 		'duplicate name' => [ '/{a}/{a}', "duplicate parameter name 'a'" ],
 		'empty name' => [ '/users/{}', 'empty parameter name in {}' ],
@@ -66,10 +70,12 @@ describe( 'problems', function() {
 		'name with a newline' => [ "/users/{id\n}", "invalid parameter name 'id\n' (use letters, digits and _)" ],
 	] );
 
-	it( 'accepts braces and escaped braces in a regex', function() {
+	it( 'accepts braces, (?:...) and an escaped or bracketed (* in a regex', function() {
 		compile_routes( [
 			[ 'GET', '/year/{year:\d{4}}', 'page.php' ],
 			[ 'GET', '/brace/{b:\{}', 'page.php' ],
+			[ 'GET', '/verbish/{v:\(\*[(*]}', 'page.php' ],
+			[ 'GET', '/group/{g:(?:a|b)}', 'page.php' ],
 		] );
 	} );
 

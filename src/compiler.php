@@ -37,6 +37,10 @@ final class Compiler {
 
 	private bool $check_files = true;
 
+	// What regex_error() found for each parameter regex, since most routes
+	// share a few, like the default.
+	private array $regex_errors = [];
+
 	public function compile( array $routes ) : array {
 		$this->problems = [];
 		$this->entries = [];
@@ -341,6 +345,11 @@ final class Compiler {
 			return 'empty regex in {' . $body . '}';
 		}
 
+		$error = $this->regex_error( $regex );
+		if ( $error !== '' ) {
+			return 'the regex in {' . $body . '} ' . $error;
+		}
+
 		$param = [
 			'type' => 'param',
 			'name' => $name,
@@ -348,6 +357,56 @@ final class Compiler {
 			'source' => '{' . $body . '}',
 		];
 		return $param;
+	}
+
+	// The regex has to compile on its own, so it can't break out of the group
+	// it's placed in, and it can't add capturing groups of its own. Nor can
+	// it use a verb like (*ACCEPT), (*COMMIT) or (*MARK): the matcher tells
+	// which route matched by its groups or its MARK, and the routes after it
+	// have to stay in play. Escapes and character classes are masked first,
+	// so \(* and [(*] aren't taken for verbs.
+	private function regex_error( string $regex ) : string {
+		if ( isset( $this->regex_errors[$regex] ) ) {
+			$error = $this->regex_errors[$regex];
+			return $error;
+		}
+
+		$matches = [];
+		$error = $this->compile_error( '{' . $regex . '}' );
+		if ( $error === '' ) {
+			$error = $this->compile_error( '{(' . $regex . ')|}', $matches );
+		}
+
+		if ( $error !== '' ) {
+			$error = "doesn't compile: " . $error;
+		} elseif ( \count( $matches ) !== 2 ) {
+			$error = 'has a capturing group; use (?:...) instead';
+		} elseif ( \str_contains( (string) \preg_replace( [ '{\\\\.}s', '{\[\^?\]?[^\]]*\]}' ], 'x', $regex ), '(*' ) ) {
+			$error = "has a (*...) verb, which parameters can't use";
+		}
+
+		$this->regex_errors[$regex] = $error;
+		return $error;
+	}
+
+	// Checks that a regex compiles by matching it against ''. Returns '' when
+	// it does, or PCRE's message when it doesn't. A temporary error handler
+	// takes PCRE's warning, so it never reaches the app's own error handler.
+	// With PREG_UNMATCHED_AS_NULL, $matches has an entry for every group.
+	private function compile_error( string $regex, array &$matches = [] ) : string {
+		$error = '';
+		\set_error_handler( function( int $number, string $message ) use ( &$error ) : bool {
+			$error = \str_replace( 'preg_match(): ', '', $message );
+			return true;
+		} );
+		$result = \preg_match( $regex, '', $matches, \PREG_UNMATCHED_AS_NULL );
+		\restore_error_handler();
+
+		if ( $result === false && $error === '' ) {
+			$error = \preg_last_error_msg();
+		}
+
+		return $error;
 	}
 
 	private function route_problem( int $index, string $message ) : void {
