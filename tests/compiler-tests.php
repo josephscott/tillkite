@@ -122,6 +122,23 @@ describe( 'compiled tables', function() {
 		] );
 	} );
 
+	// The any table only says whether something matches, so every route
+	// shares what it can, and each regex ends in /?$.
+	it( 'puts every route of every method in the any table', function() {
+		$compiled = compile_routes( [
+			[ 'GET', '/', 'page.php' ],
+			[ 'POST', '/users', 'page.php' ],
+			[ 'GET', '/users/{id:\d+}', 'page.php' ],
+			[ 'PUT', '/{lang}/about', 'page.php' ],
+			[ 'POST', '/users/{id}/posts', 'page.php' ],
+		] );
+
+		expect( $compiled['any'] )->toBe( [
+			'static' => [ '/' => 0, '/users' => 1 ],
+			'dynamic' => [ '{^/(?|users/(?|(\d+)/?$|([^/]++)/posts/?$)|([^/]++)/about/?$)}sD' => [] ],
+		] );
+	} );
+
 	it( 'tells more routes apart by a MARK', function() {
 		$routes = [];
 		for ( $i = 0; $i <= Tillkite\Compiler::COUNT_LEAVES; $i++ ) {

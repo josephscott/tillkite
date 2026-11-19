@@ -64,6 +64,8 @@ final class Compiler {
 	 * - dynamic: method => [ regex => [ key => the match, with the parameter
 	 *            names where their values go ] ], where the key is the
 	 *            regex's MARK or its number of matches
+	 * - any:     [ 'static' => ..., 'dynamic' => ... ] for every route of
+	 *            every method, matching with or without a trailing slash
 	 *
 	 * A route for '*' is added to every method's table, and also gets a '*'
 	 * table for methods that have no routes of their own.
@@ -81,6 +83,7 @@ final class Compiler {
 			'checks' => [],
 			'static' => [],
 			'dynamic' => [],
+			'any' => [ 'static' => [], 'dynamic' => [] ],
 		];
 
 		$allowed = $this->check_settings();
@@ -149,12 +152,30 @@ final class Compiler {
 			if ( $built === false ) {
 				$built = \count( $built_tables );
 				$built_items[] = $items;
-				$built_tables[] = $this->combine( $items );
+				$built_tables[] = $this->combine( $items, false );
 			}
 
 			$compiled['static'][$table] = $static;
 			$compiled['dynamic'][$table] = $built_tables[$built];
 		}
+
+		// Every route of every method, for the matcher's first check after a
+		// miss. Its regexes end in /?$ instead of $, so a path ending in / also
+		// finds the routes for the path without it.
+		$items = [];
+		$seen = [];
+		foreach ( $parsed as $index => $entry ) {
+			foreach ( $entry['variants'] as $variant ) {
+				if ( $variant['regex'] === '' ) {
+					$compiled['any']['static'][$variant['path']] ??= $index;
+				} elseif ( ! isset( $seen[$variant['regex']] ) ) {
+					$seen[$variant['regex']] = true;
+					$items[] = [ $index, $variant['pieces'], $variant['names'] ];
+				}
+			}
+		}
+
+		$compiled['any']['dynamic'] = $this->combine( $items, true );
 
 		// The matcher checks the static table first, so a static path that an
 		// earlier dynamic route already matches must come out of it. Otherwise
@@ -751,9 +772,10 @@ final class Compiler {
 
 	// Joins a table's [ route index, pieces, names ] items, in route order,
 	// into one regex, with routes that start with the same pieces sharing
-	// them, and returns [ regex => leaves ]. When PCRE says the
-	// regex is too large, splits the list in half and tries again.
-	private function combine( array $items ) : array {
+	// them, and returns [ regex => leaves ]. $any is for the any table, whose
+	// regexes only say whether something matches. When PCRE says the regex is
+	// too large, splits the list in half and tries again.
+	private function combine( array $items, bool $any ) : array {
 		$regexes = [];
 		if ( $items === [] ) {
 			return $regexes;
@@ -761,12 +783,12 @@ final class Compiler {
 
 		$tree = [ 'fixed' => true, 'children' => [], 'last' => [], 'variants' => [] ];
 		foreach ( $items as [ $index, $pieces, $names ] ) {
-			$this->insert( $tree, $pieces, 0, [ 'status' => 200, 'route' => $index, 'params' => $names ] );
+			$this->insert( $tree, $pieces, 0, [ 'status' => 200, 'route' => $index, 'params' => $names ], $any );
 		}
 
-		[ $ends, $leaves ] = $this->leaf_ends( $this->leaves( $tree ) );
+		[ $ends, $leaves ] = $this->leaf_ends( $this->leaves( $tree ), $any );
 		$position = 0;
-		$combined = '{^' . $this->render( $tree, $ends, $position ) . '}sD';
+		$combined = '{^' . $this->render( $tree, $ends, $position, ! $any ) . '}sD';
 
 		$error = $this->compile_error( $this->check_copy( $combined ) );
 		if ( $error === '' ) {
@@ -781,8 +803,8 @@ final class Compiler {
 
 		$half = \intdiv( \count( $items ) + 1, 2 );
 		$regexes = \array_merge(
-			$this->combine( \array_slice( $items, 0, $half ) ),
-			$this->combine( \array_slice( $items, $half ) )
+			$this->combine( \array_slice( $items, 0, $half ), $any ),
+			$this->combine( \array_slice( $items, $half ), $any )
 		);
 		return $regexes;
 	}
@@ -809,9 +831,15 @@ final class Compiler {
 	// of matches tells them apart, like FastRoute's GroupCountBased. That's
 	// cheaper than a MARK, which PHP adds to the matches as a new string.
 	// With more leaves, the padding would cost more than the MARK saves.
-	private function leaf_ends( array $leaves ) : array {
+	private function leaf_ends( array $leaves, bool $any ) : array {
 		$ends = [];
 		$keys = [];
+		if ( $any ) {
+			$ends = \array_fill( 0, \count( $leaves ), '/?$' );
+			$result = [ $ends, $keys ];
+			return $result;
+		}
+
 		if ( \count( $leaves ) > self::COUNT_LEAVES ) {
 			foreach ( $leaves as $position => $leaf ) {
 				$ends[] = '$(*:' . $position . ')';
@@ -849,7 +877,10 @@ final class Compiler {
 	// one place, like /(.+), PCRE would try the later route's rest before the
 	// earlier route's other ways to match it, so the later route could win.
 	// Below a piece like that there's only ever one route.
-	private function insert( array &$node, array $pieces, int $depth, array $leaf ) : void {
+	//
+	// The any table only says whether something matches, so order doesn't
+	// matter there, and every route shares as much as it can.
+	private function insert( array &$node, array $pieces, int $depth, array $leaf, bool $any ) : void {
 		$node['variants'][] = $pieces;
 		if ( $depth === \count( $pieces ) ) {
 			$node['children'][] = [ 'piece' => null, 'leaf' => $leaf ];
@@ -858,7 +889,7 @@ final class Compiler {
 
 		$piece = $pieces[$depth];
 		$position = $node['last'][$piece['regex']] ?? null;
-		if ( $position !== null && ! $this->can_skip( $node, $position + 1, $pieces, $depth ) ) {
+		if ( $position !== null && ! $any && ! $this->can_skip( $node, $position + 1, $pieces, $depth ) ) {
 			$position = null;
 		}
 
@@ -873,12 +904,12 @@ final class Compiler {
 				'variants' => [],
 			];
 
-			if ( $fixed ) {
+			if ( $fixed || $any ) {
 				$node['last'][$piece['regex']] = $position;
 			}
 		}
 
-		$this->insert( $node['children'][$position], $pieces, $depth + 1, $leaf );
+		$this->insert( $node['children'][$position], $pieces, $depth + 1, $leaf, $any );
 	}
 
 	// Whether a route can go ahead of the node's children from $start on: no
@@ -958,11 +989,11 @@ final class Compiler {
 	}
 
 	// Writes a tree node as a regex. $position counts the leaves written so
-	// far. Each child becomes an alternative: [ 'text' => its literal text,
-	// 'rest' => the regex after that, its children included, 'literal' =>
-	// true when it has no parameters ]. A leaf has no text and a rest of its
-	// end.
-	private function render( array $node, array $ends, int &$position ) : string {
+	// far, and $ordered is false for the any table. Each child becomes an
+	// alternative: [ 'text' => its literal text, 'rest' => the regex after
+	// that, its children included, 'literal' => true when it has no
+	// parameters ]. A leaf has no text and a rest of its end.
+	private function render( array $node, array $ends, int &$position, bool $ordered ) : string {
 		$alternatives = [];
 		foreach ( $node['children'] as $child ) {
 			if ( $child['piece'] === null ) {
@@ -975,12 +1006,12 @@ final class Compiler {
 			$rest = \substr( $piece['regex'], \strlen( \preg_quote( $piece['text'] ) ) );
 			$alternatives[] = [
 				'text' => $piece['text'],
-				'rest' => $rest . $this->render( $child, $ends, $position ),
+				'rest' => $rest . $this->render( $child, $ends, $position, $ordered ),
 				'literal' => $piece['literal'],
 			];
 		}
 
-		$regex = $this->alternation( $alternatives, 0 );
+		$regex = $this->alternation( $alternatives, 0, $ordered );
 		return $regex;
 	}
 
@@ -995,7 +1026,7 @@ final class Compiler {
 	// alternative whose text runs out before a parameter can match anything
 	// there, so nothing moves past it. A leaf, or plain text that runs out,
 	// is next followed by / or the end, which no other text has there.
-	private function alternation( array $alternatives, int $offset ) : string {
+	private function alternation( array $alternatives, int $offset, bool $ordered ) : string {
 		$groups = [];
 		$open = [];
 		foreach ( $alternatives as $alternative ) {
@@ -1006,7 +1037,7 @@ final class Compiler {
 				$key = 'param';
 			}
 
-			if ( $key === 'param' ) {
+			if ( $key === 'param' && $ordered ) {
 				$groups[] = [ $alternative ];
 				$open = [];
 				continue;
@@ -1023,7 +1054,7 @@ final class Compiler {
 
 		$regexes = [];
 		foreach ( $groups as $group ) {
-			$regexes[] = $this->group_regex( $group, $offset );
+			$regexes[] = $this->group_regex( $group, $offset, $ordered );
 		}
 
 		$regex = $regexes[0];
@@ -1035,7 +1066,7 @@ final class Compiler {
 	}
 
 	// A group's shared text after $offset, then its alternatives.
-	private function group_regex( array $group, int $offset ) : string {
+	private function group_regex( array $group, int $offset, bool $ordered ) : string {
 		$first = $group[0]['text'];
 		if ( \count( $group ) === 1 ) {
 			$regex = \preg_quote( \substr( $first, $offset ) ) . $group[0]['rest'];
@@ -1051,7 +1082,7 @@ final class Compiler {
 		}
 
 		if ( $length > 0 ) {
-			$regex = \preg_quote( \substr( $first, $offset, $length ) ) . $this->alternation( $group, $offset + $length );
+			$regex = \preg_quote( \substr( $first, $offset, $length ) ) . $this->alternation( $group, $offset + $length, $ordered );
 			return $regex;
 		}
 
