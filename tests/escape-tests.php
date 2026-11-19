@@ -21,6 +21,10 @@ const ATTACKS = [
 	'',
 ];
 
+afterEach( function() {
+	Esc::set_encoding( 'UTF-8' );
+} );
+
 function parse_html( string $body ) : Dom\HTMLDocument {
 	$document = Dom\HTMLDocument::createFromString( '<!doctype html><body>' . $body, LIBXML_NOERROR );
 	return $document;
@@ -143,6 +147,78 @@ it( 'gives CSS with only letters, digits, six-digit escapes and characters outsi
 		expect( $css )->toMatch( '/^(?![0-9])(?:[a-zA-Z0-9\x80-\xff]|\\\\[0-9A-F]{6})* ?$/' );
 		expect( css_decoded( $css . ' x' ) )->toBe( shown( $value ) . ' x' );
 	}
+} );
+
+// Text in another encoding goes in as bytes in that encoding. Each value ends
+// with bytes that start a longer character, then " \ ', so a decoder that
+// joined them would take in what follows. The output must be all ASCII,
+// and give back what mbstring reads the bytes as, but in HTML, U+0080 to
+// U+009F as U+FFFD, since no character reference can be one of them.
+it( 'escapes text in another encoding, with output all in ASCII', function( string $encoding, string $mbstring, string $sample ) {
+	expect( Esc::set_encoding( $encoding ) )->toBeTrue();
+	$bytes = (string) mb_convert_encoding( '<"\'&> =` ' . $sample, $mbstring, 'UTF-8' ) . "\x81\"\x81\\\xbf'";
+	$text = (string) mb_convert_encoding( $bytes, 'UTF-8', $mbstring );
+	$html = (string) preg_replace( '/[\x{80}-\x{9F}]/u', "\u{FFFD}", $text );
+
+	$outputs = [ Esc::html( $bytes ), Esc::html_attr( $bytes ), Esc::url( '/' . $bytes ), Esc::js( [ $bytes => $bytes ] ), Esc::css( $bytes ) ];
+	foreach ( $outputs as $output ) {
+		expect( $output )->toMatch( '/^[\x00-\x7F]*$/' );
+	}
+
+	$div = parse_html( '<div title=' . $outputs[1] . '>' . $outputs[0] . '</div><a href=' . $outputs[2] . '></a>' )->querySelector( 'div' );
+	expect( [ $div->textContent, $div->getAttribute( 'title' ), $div->attributes->length ] )->toBe( [ $html, $html, 1 ] );
+	expect( $div->ownerDocument->querySelector( 'a' )->getAttribute( 'href' ) )->toBe( '/' . $html );
+	expect( json_decode( $outputs[3], true ) )->toBe( [ $text => $text ] );
+	expect( css_decoded( $outputs[4] ) )->toBe( $text );
+} )->with( [
+	[ 'iso-8859-1', 'Windows-1252', 'é€“' ],
+	[ 'ISO-8859-2', 'ISO-8859-2', 'ł' ],
+	[ 'iso-8859-5', 'ISO-8859-5', 'Ж' ],
+	[ 'iso-8859-7', 'ISO-8859-7', 'λ' ],
+	[ 'iso-8859-15', 'ISO-8859-15', '€' ],
+	[ 'windows-1251', 'Windows-1251', 'Ж' ],
+	[ 'windows-1252', 'Windows-1252', '€“' ],
+	[ 'windows-1254', 'Windows-1254', 'ğ' ],
+	[ 'IBM866', 'CP866', 'Ж' ],
+	[ 'koi8-r', 'KOI8-R', 'Ж' ],
+	[ 'koi8-u', 'KOI8-U', 'ї' ],
+	[ 'Shift_JIS', 'CP932', 'あ表ソ①' ],
+	[ 'EUC-JP', 'eucJP-win', 'あ表①' ],
+	[ 'EUC-KR', 'UHC', '한국' ],
+	[ 'GBK', 'GB18030', '中文€' ],
+	[ 'gb18030', 'GB18030', '中文😀' ],
+	[ 'Big5', 'CP950', '中文' ],
+] );
+
+it( 'checks a URL\'s scheme after converting it, when mbstring takes out the bytes it cannot read', function() {
+	$previous = ini_get( 'mbstring.substitute_character' );
+	ini_set( 'mbstring.substitute_character', 'none' );
+	Esc::set_encoding( 'EUC-JP' );
+	$url = Esc::url( "java\x81script:alert(1)" );
+	ini_set( 'mbstring.substitute_character', (string) $previous );
+
+	expect( $url )->toBe( 'about:invalid' );
+} );
+
+it( 'ends an array that holds itself in another encoding, and logs it', function() {
+	Esc::set_encoding( 'Shift_JIS' );
+	$array = [ 'a' => "\x82\xa0" ];
+	$array['self'] = &$array;
+	$log = logged( function() use ( $array ) {
+		expect( Esc::js( $array ) )->toStartWith( '{"a":"\\u3042","self":{"a":"\\u3042",' );
+	} );
+
+	expect( $log )->toContain( 'Tillkite: Escape::js() could not encode all of its value: Maximum stack depth exceeded' );
+} );
+
+it( 'logs an encoding it does not take, and keeps the one it had', function() {
+	Esc::set_encoding( 'shift_jis' );
+	$log = logged( function() {
+		expect( Esc::set_encoding( 'UTF-16' ) )->toBeFalse();
+	} );
+
+	expect( $log )->toContain( "Tillkite: Escape::set_encoding() doesn't take UTF-16, so the encoding didn't change" );
+	expect( Esc::html( "\x82\xa0" ) )->toBe( '&#12354;' );
 } );
 
 // What a terminal or an editor could take as a command, a new entry, or
