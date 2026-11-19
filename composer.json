@@ -6,6 +6,9 @@
 	"require": {
 		"php": ">=8.4"
 	},
+	"require-dev": {
+		"josephscott/phpcsfixer-config": "0.0.8"
+	},
 	"config": {
 		"allow-plugins": false
 	}
