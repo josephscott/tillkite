@@ -137,6 +137,37 @@ describe( 'problems', function() {
 		compile_routes( [ [ 'GET', '/blog[/{year}[/{month}]]', 'page.php' ] ] );
 	} );
 
+	it( 'reports a trailing slash when trailing_slash is false', function() {
+		$problems = route_problems( [
+			[ 'GET', '/', 'page.php' ],
+			[ 'GET', '/users/', 'page.php' ],
+		] );
+
+		expect( $problems )->toHaveCount( 1 );
+		expect( $problems[0] )->toEndWith( "'/users/' ends with /, but trailing_slash is false" );
+	} );
+
+	it( 'reports a missing trailing slash when trailing_slash is true', function( string $pattern, string $message ) {
+		$problems = route_problems( [ [ 'GET', $pattern, 'page.php' ] ], [ 'trailing_slash' => true ] );
+
+		expect( $problems )->toHaveCount( 1 );
+		expect( $problems[0] )->toEndWith( $message );
+	} )->with( [
+		'static' => [ '/users', "'/users' must end with /, because trailing_slash is true" ],
+		'optional variant' => [ '/blog[/{page}/]', "'/blog' must end with /, because trailing_slash is true" ],
+		'dot in an earlier segment' => [ '/v1.0/users', "'/v1.0/users' must end with /, because trailing_slash is true" ],
+	] );
+
+	it( 'lets a last segment with a literal dot leave off the slash when trailing_slash is true', function() {
+		compile_routes( [
+			[ 'GET', '/', 'page.php' ],
+			[ 'GET', '/users/', 'page.php' ],
+			[ 'GET', '/feed.xml', 'page.php' ],
+			[ 'GET', '/files/{name}.txt', 'page.php' ],
+			[ 'GET', '/blog/[{page}/]', 'page.php' ],
+		], [ 'trailing_slash' => true ] );
+	} );
+
 	it( 'accepts a method, a list, * and custom methods', function() {
 		compile_routes( [
 			[ 'GET', '/a', 'page.php' ],

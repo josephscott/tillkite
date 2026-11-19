@@ -16,6 +16,8 @@ final class Compiler {
 
 	public const string DEFAULT_REGEX = '[^/]+';
 
+	public bool $trailing_slash = false;
+
 	public array $methods = [];
 
 	public string $handlers = '';
@@ -290,7 +292,13 @@ final class Compiler {
 
 		$variants = [];
 		foreach ( $split as $variant_tokens ) {
-			$variants[] = $this->compile_variant( $variant_tokens );
+			$variant = $this->compile_variant( $variant_tokens );
+			$error = $this->slash_error( $variant_tokens, $variant['source'] );
+			if ( $error !== '' ) {
+				return $error;
+			}
+
+			$variants[] = $variant;
 		}
 
 		return $variants;
@@ -487,6 +495,56 @@ final class Compiler {
 			'names' => $names,
 		];
 		return $variant;
+	}
+
+	// Returns a problem message when the variant doesn't follow trailing_slash.
+	private function slash_error( array $tokens, string $source ) : string {
+		$error = '';
+		if ( $source === '/' ) {
+			return $error;
+		}
+
+		$last = $tokens[\count( $tokens ) - 1];
+		$ends_with_slash = false;
+		if ( $last['type'] === 'literal' && \str_ends_with( $last['text'], '/' ) ) {
+			$ends_with_slash = true;
+		}
+
+		if ( ! $this->trailing_slash && $ends_with_slash ) {
+			$error = "'" . $source . "' ends with /, but trailing_slash is false";
+		}
+
+		if ( $this->trailing_slash && ! $ends_with_slash && ! $this->last_segment_has_dot( $tokens ) ) {
+			$error = "'" . $source . "' must end with /, because trailing_slash is true";
+		}
+
+		return $error;
+	}
+
+	// With trailing_slash on, a last segment with a literal dot, like
+	// /feed.xml, can leave off the slash.
+	private function last_segment_has_dot( array $tokens ) : bool {
+		for ( $i = \count( $tokens ) - 1; $i >= 0; $i-- ) {
+			if ( $tokens[$i]['type'] !== 'literal' ) {
+				continue;
+			}
+
+			$text = $tokens[$i]['text'];
+			$slash = \strrpos( $text, '/' );
+			if ( $slash !== false ) {
+				$text = \substr( $text, $slash + 1 );
+			}
+
+			if ( \str_contains( $text, '.' ) ) {
+				return true;
+			}
+
+			if ( $slash !== false ) {
+				return false;
+			}
+		}
+
+		return false;
 	}
 
 	// Browsers send non-ASCII characters percent-encoded, with uppercase hex.
