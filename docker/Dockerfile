@@ -1,5 +1,5 @@
-# The images that make fpm and make apache run in, so neither needs anything
-# installed besides Docker. PHP_VERSION picks the PHP version.
+# The images that make fpm, make apache and make matrix run in, so none needs
+# anything installed besides Docker. PHP_VERSION picks the PHP version.
 ARG PHP_VERSION=8.5
 
 FROM composer:2.9.8 AS composer

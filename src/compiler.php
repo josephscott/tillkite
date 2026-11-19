@@ -1157,8 +1157,11 @@ final class Compiler {
 			return $regexes;
 		}
 
+		// PCRE's offset is into the joined regex, not the route's pattern, so
+		// it's left out. Some PCRE versions give the method's table and the any
+		// table different offsets, which would report the route twice.
 		if ( \count( $items ) === 1 ) {
-			$this->route_problem( $items[0][0], "the pattern doesn't compile: " . $error );
+			$this->route_problem( $items[0][0], "the pattern doesn't compile: " . \preg_replace( '/ at offset \d+$/D', '', $error ) );
 			return $regexes;
 		}
 

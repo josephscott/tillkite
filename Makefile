@@ -81,7 +81,9 @@ bench: ## Compare Tillkite with FastRoute, Symfony Routing and RadixRouter
 # ### #
 ##@ Docker: nothing to install but Docker
 
-# The PHP version that make fpm and make apache run, like: make fpm PHP=8.4
+# The PHP versions that make matrix checks, and the one that make fpm and
+# make apache run, like: make fpm PHP=8.4
+PHP_VERSIONS = 8.4 8.5
 PHP ?= 8.5
 
 # Builds the image for one PHP version, tagged tillkite-dev:VERSION. After the
@@ -110,4 +112,13 @@ apache: ## Tests under Apache with mod_php, in Docker, against src/ and dist/til
 	@echo "--> Apache: tests under Apache with mod_php, in Docker, on PHP $(PHP)"
 	$(call docker_apache_image,$(PHP))
 	$(call docker_apache_run,$(PHP),-e TILLKITE_APACHE=1) sh -c 'php bin/dist.php > /dev/null && vendor/bin/pest tests/apache-tests.php && TILLKITE_DIST=1 vendor/bin/pest tests/apache-tests.php'
+	@echo
+
+.PHONY: matrix
+matrix: ## Lint, analyze and test on each PHP version, in Docker, with the php-fpm tests
+	@for version in $(PHP_VERSIONS); do \
+		echo; \
+		echo "--> Matrix: PHP $$version, in Docker"; \
+		$(call docker_image,$$version) && $(call docker_run,$$version) /src/docker/check.sh || exit 1; \
+	done
 	@echo

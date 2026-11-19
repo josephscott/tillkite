@@ -297,7 +297,7 @@ describe( 'problems', function() {
 		$problems = route_problems( [ [ 'GET', '/' . str_repeat( 'a', 70000 ) . '/{id}', 'page.php' ] ] );
 
 		expect( $problems )->toHaveCount( 1 );
-		expect( $problems[0] )->toContain( "the pattern doesn't compile: Compilation failed: regular expression is too large" );
+		expect( $problems[0] )->toEndWith( "the pattern doesn't compile: Compilation failed: regular expression is too large" );
 	} );
 
 	it( 'reports a trailing slash when trailing_slash is false', function() {
