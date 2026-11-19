@@ -73,10 +73,12 @@ describe( 'matching', function() {
 		expect( $result['status'] )->toBe( 500 );
 	} );
 
-	it( 'returns 404 when nothing matches', function() {
-		$matcher = make_matcher( [ [ 'GET', '/users/{id:\d+}', 'page.php' ] ] );
+	it( "doesn't answer with a 405 or a 308 for a value its regex turns away", function() {
+		$matcher = make_matcher( [ [ 'GET', '/f/{v:[^./]+}', 'page.php' ] ] );
 
-		expect( $matcher->match( 'GET', '/users/x' ) )->toBe( [ 'status' => 404 ] );
+		expect( $matcher->match( 'POST', '/f/%2E%2E' )['status'] )->toBe( 404 );
+		expect( $matcher->match( 'GET', '/f/%2E%2E/' )['status'] )->toBe( 404 );
+		expect( $matcher->match( 'POST', '/f/ok%20' )['status'] )->toBe( 405 );
 	} );
 
 	// The b at the end gets PCRE past its quick check for one, and the c in
@@ -233,5 +235,83 @@ describe( 'order', function() {
 
 		expect( $matcher->match( 'HEAD', '/a' )['route'] )->toBe( 0 );
 		expect( $matcher->match( 'GET', '/a' )['route'] )->toBe( 1 );
+	} );
+} );
+
+describe( 'when nothing matches', function() {
+	it( 'returns 405 with the allowed methods', function() {
+		$matcher = make_matcher( [
+			[ 'POST', '/a', 'page.php' ],
+			[ 'GET', '/a', 'page.php' ],
+			[ 'DELETE', '/b/{id}', 'page.php' ],
+			[ '*', '/c', 'page.php' ],
+		] );
+
+		expect( $matcher->match( 'PUT', '/a' ) )->toBe( [ 'status' => 405, 'allow' => [ 'GET', 'HEAD', 'POST' ] ] );
+		expect( $matcher->match( 'GET', '/b/1' ) )->toBe( [ 'status' => 405, 'allow' => [ 'DELETE' ] ] );
+	} );
+
+	it( 'redirects to the path without a trailing slash when trailing_slash is false', function() {
+		$matcher = make_matcher( [
+			[ 'GET', '/', 'page.php' ],
+			[ 'GET', '/users', 'page.php' ],
+			[ 'GET', '/docs/{path:.+}', 'page.php' ],
+		] );
+
+		expect( $matcher->match( 'GET', '/users/' ) )->toBe( [ 'status' => 308, 'path' => '/users' ] );
+		expect( $matcher->match( 'GET', '/docs/a/b/' ) )->toBe( [ 'status' => 308, 'path' => '/docs/a/b' ] );
+	} );
+
+	it( 'redirects to the path with a trailing slash when trailing_slash is true', function() {
+		$matcher = make_matcher( [
+			[ 'GET', '/users/', 'page.php' ],
+			[ 'GET', '/users/{id}/', 'page.php' ],
+			[ 'GET', '/feed.xml', 'page.php' ],
+		], [ 'trailing_slash' => true ] );
+
+		expect( $matcher->match( 'GET', '/users' ) )->toBe( [ 'status' => 308, 'path' => '/users/' ] );
+		expect( $matcher->match( 'GET', '/users/7' ) )->toBe( [ 'status' => 308, 'path' => '/users/7/' ] );
+		expect( $matcher->match( 'GET', '/feed.xml/' ) )->toBe( [ 'status' => 308, 'path' => '/feed.xml' ] );
+	} );
+
+	it( 'only redirects to a route for the same method', function() {
+		$matcher = make_matcher( [ [ 'GET', '/users', 'page.php' ] ] );
+
+		expect( $matcher->match( 'POST', '/users/' ) )->toBe( [ 'status' => 404 ] );
+	} );
+
+	it( 'returns 404', function() {
+		$matcher = make_matcher( [
+			[ 'GET', '/a', 'page.php' ],
+			[ 'GET', '/b/{id}', 'page.php' ],
+		] );
+
+		expect( $matcher->match( 'GET', '/nope' ) )->toBe( [ 'status' => 404 ] );
+		expect( $matcher->match( 'GET', '/' ) )->toBe( [ 'status' => 404 ] );
+		expect( $matcher->match( 'GET', '/b' ) )->toBe( [ 'status' => 404 ] );
+		expect( $matcher->match( 'BREW', '/nope' ) )->toBe( [ 'status' => 404 ] );
+	} );
+
+	it( "returns 404 for a path that doesn't start with /", function( string $path ) {
+		$matcher = make_matcher( [ [ '*', '/{x}', 'page.php' ] ] );
+
+		expect( $matcher->match( 'GET', $path ) )->toBe( [ 'status' => 404 ] );
+	} )->with( [ '', 'http://example.com/a' ] );
+
+	it( 'returns 404 when there are no routes', function() {
+		$matcher = make_matcher( [] );
+
+		expect( $matcher->match( 'GET', '/' ) )->toBe( [ 'status' => 404 ] );
+	} );
+
+	it( 'returns 500 when preg_match fails', function() {
+		$matcher = make_matcher( [ [ 'GET', '/x/{v:(?:a|aa)+}', 'page.php' ] ] );
+
+		$limit = ini_get( 'pcre.backtrack_limit' );
+		ini_set( 'pcre.backtrack_limit', '1000' );
+		$result = $matcher->match( 'GET', '/x/' . str_repeat( 'a', 40 ) . '!' );
+		ini_set( 'pcre.backtrack_limit', (string) $limit );
+
+		expect( $result )->toBe( [ 'status' => 500, 'error' => 'Backtrack limit exhausted' ] );
 	} );
 } );

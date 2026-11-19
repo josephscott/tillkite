@@ -17,6 +17,8 @@ final class Matcher {
 	 * base. Returns one of:
 	 *
 	 * - [ 'status' => 200, 'route' => 3, 'params' => [ 'id' => '42' ] ]
+	 * - [ 'status' => 405, 'allow' => [ 'GET', 'HEAD' ] ]
+	 * - [ 'status' => 308, 'path' => '/users' ]
 	 * - [ 'status' => 404 ]
 	 * - [ 'status' => 500, 'error' => 'Backtrack limit exhausted' ]
 	 */
@@ -28,8 +30,10 @@ final class Matcher {
 
 		// Every method with routes has a dynamic table, even an empty one. A
 		// method without uses the '*' table, if there is one.
+		$table = $method;
 		$regexes = $this->compiled['dynamic'][$method] ?? null;
 		if ( $regexes === null ) {
+			$table = '*';
 			$result = $this->compiled['static']['*'][$path] ?? null;
 			if ( $result !== null ) {
 				return $result;
@@ -66,7 +70,7 @@ final class Matcher {
 			}
 		}
 
-		$result = [ 'status' => 404 ];
+		$result = $this->miss( $table, $path );
 		return $result;
 	}
 
@@ -166,6 +170,108 @@ final class Matcher {
 		}
 
 		$result = [ 'status' => 200, 'params' => $params ];
+		return $result;
+	}
+
+	// Nothing matched. The first check, across every method and with or
+	// without the trailing slash, settles most misses. Only a path that some
+	// route matches needs the checks for a 405 or a 308.
+	private function miss( string $table, string $path ) : array {
+		$result = [ 'status' => 404 ];
+		if ( ! \str_starts_with( $path, '/' ) || ! $this->anywhere( $path ) ) {
+			return $result;
+		}
+
+		$result = $this->allowed( $table, $path );
+		if ( $result['status'] !== 404 ) {
+			return $result;
+		}
+
+		$result = $this->redirect( $table, $path );
+		return $result;
+	}
+
+	// Whether any route, for any method, matches the path, or the path with
+	// its trailing slash added or removed. It may say yes when none does, but
+	// never no when one does. The regexes end in /?$, so matching them
+	// against the path with one trailing slash covers both.
+	private function anywhere( string $path ) : bool {
+		$base = $path;
+		if ( $path !== '/' && \str_ends_with( $path, '/' ) ) {
+			$base = \substr( $path, 0, -1 );
+		}
+
+		$subject = $base . '/';
+		if ( $path === '/' ) {
+			$subject = $path;
+		}
+
+		if ( isset( $this->compiled['any']['static'][$base] ) || isset( $this->compiled['any']['static'][$subject] ) ) {
+			return true;
+		}
+
+		foreach ( $this->compiled['any']['dynamic'] as $regex => $leaves ) {
+			// A PCRE error is a yes, so the full checks report it.
+			if ( \preg_match( $regex, $subject ) !== 0 ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	// The static table is checked first. Compiler has already removed any
+	// static path that an earlier dynamic route matches.
+	private function find( string $table, string $path ) : array {
+		$result = $this->compiled['static'][$table][$path] ?? $this->find_dynamic( $table, $path );
+		return $result;
+	}
+
+	// Looks for routes with other methods that match the path, for a 405.
+	private function allowed( string $table, string $path ) : array {
+		$allow = [];
+		foreach ( \array_keys( $this->compiled['static'] ) as $other ) {
+			if ( $other === '*' || $other === $table ) {
+				continue;
+			}
+
+			$found = $this->find( $other, $path );
+			if ( $found['status'] === 500 ) {
+				return $found;
+			}
+
+			if ( $found['status'] === 200 ) {
+				$allow[] = $other;
+			}
+		}
+
+		$result = [ 'status' => 404 ];
+		if ( $allow !== [] ) {
+			$result = [ 'status' => 405, 'allow' => $allow ];
+		}
+
+		return $result;
+	}
+
+	// Adds or removes the trailing slash, and redirects if that matches.
+	private function redirect( string $table, string $path ) : array {
+		$result = [ 'status' => 404 ];
+		if ( $path === '/' ) {
+			return $result;
+		}
+
+		$other = $path . '/';
+		if ( \str_ends_with( $path, '/' ) ) {
+			$other = \substr( $path, 0, -1 );
+		}
+
+		$found = $this->find( $table, $other );
+		if ( $found['status'] === 500 ) {
+			$result = $found;
+		} elseif ( $found['status'] === 200 ) {
+			$result = [ 'status' => 308, 'path' => $other ];
+		}
+
 		return $result;
 	}
 }
