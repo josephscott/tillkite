@@ -52,3 +52,4 @@ All notable changes to Tillkite are recorded here. The format follows [Keep a Ch
 - The route cache's key has a hash of Tillkite's code, so a cache that other code wrote is never read, even between releases.
 - The README: a quick start with `new`, by hand and in production, and every route, handler, template, escaping and option feature. `make apache` checks that its test site's `.htaccess` is the README's.
 - `notes/SPEC.md`, the design: the project layout, code style, public API, how matching, the route cache and errors work, the benchmarks, and why.
+- `AGENTS.md`, for AI coding tools: where the design is, and the rules for working on Tillkite, with `CLAUDE.md` pointing to it.

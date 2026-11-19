@@ -7,6 +7,8 @@
 /.github export-ignore
 /.gitignore export-ignore
 /.php-cs-fixer.dist.php export-ignore
+/AGENTS.md export-ignore
+/CLAUDE.md export-ignore
 /Makefile export-ignore
 /bench export-ignore
 /bin/dist.php export-ignore
