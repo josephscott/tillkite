@@ -59,6 +59,11 @@ describe( 'problems', function() {
 		'no leading slash' => [ 'users', 'the pattern must start with /' ],
 		'unclosed brace' => [ '/users/{id', 'unbalanced { } in the pattern' ],
 		'stray brace' => [ '/users/id}', 'unbalanced { } in the pattern' ],
+		'unclosed bracket' => [ '/blog[/{page}', 'unbalanced [ ] in the pattern' ],
+		'stray bracket' => [ '/blog]', 'unbalanced [ ] in the pattern' ],
+		'optional in the middle' => [ '/blog[/{page}]/all', 'optional parts must be at the end of the pattern' ],
+		'empty optional' => [ '/blog[]', 'empty optional part [ ] in the pattern' ],
+		'empty nested optional' => [ '/blog[/a[]]', 'empty optional part [ ] in the pattern' ],
 		'capturing group' => [ '/users/{id:(\d+)}', 'the regex in {id:(\d+)} has a capturing group; use (?:...) instead' ],
 		'verb' => [ '/users/{id:\d+(*ACCEPT)}', "the regex in {id:\d+(*ACCEPT)} has a (*...) verb, which parameters can't use" ],
 		'invalid regex' => [ '/users/{id:[}', "the regex in {id:[} doesn't compile: Compilation failed: missing terminating ]" ],
@@ -77,6 +82,10 @@ describe( 'problems', function() {
 			[ 'GET', '/verbish/{v:\(\*[(*]}', 'page.php' ],
 			[ 'GET', '/group/{g:(?:a|b)}', 'page.php' ],
 		] );
+	} );
+
+	it( 'accepts optional parts at the end, nested', function() {
+		compile_routes( [ [ 'GET', '/blog[/{year}[/{month}]]', 'page.php' ] ] );
 	} );
 
 	it( 'accepts a method, a list, * and custom methods', function() {

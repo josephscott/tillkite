@@ -120,9 +120,9 @@ final class Compiler {
 		];
 	}
 
-	// Returns [ 'methods' => as parse_methods() returns them, 'tokens' => as
-	// parse_pattern() returns them, 'route' => as written ], or null when the
-	// route has problems.
+	// Returns [ 'methods' => as parse_methods() returns them, 'variants' =>
+	// as parse_pattern() returns them, 'route' => as written ], or null when
+	// the route has problems.
 	private function parse_route( int $index, array $allowed ) : ?array {
 		$route = $this->entries[$index]['route'];
 		if ( ! \is_array( $route ) || ! \array_is_list( $route ) || \count( $route ) < 3 || \count( $route ) > 4 ) {
@@ -162,7 +162,7 @@ final class Compiler {
 
 		$parsed = [
 			'methods' => $methods,
-			'tokens' => $pattern,
+			'variants' => $pattern,
 			'route' => $route,
 		];
 		return $parsed;
@@ -217,7 +217,9 @@ final class Compiler {
 		return $error;
 	}
 
-	// Returns the pattern's tokens, or a problem message.
+	// Returns the token list for each variant, or a problem message. Each
+	// optional part adds a variant: /blog[/{page}] has the variants /blog and
+	// /blog/{page}.
 	private function parse_pattern( string $pattern ) : array|string {
 		if ( ! \str_starts_with( $pattern, '/' ) ) {
 			return 'the pattern must start with /';
@@ -241,7 +243,8 @@ final class Compiler {
 			$names[] = $token['name'];
 		}
 
-		return $tokens;
+		$variants = $this->split_variants( $tokens );
+		return $variants;
 	}
 
 	// Splits a pattern into literal, param, [ and ] tokens, or returns a
@@ -357,6 +360,59 @@ final class Compiler {
 			'source' => '{' . $body . '}',
 		];
 		return $param;
+	}
+
+	// Returns the token list for each variant, shortest first, or a problem
+	// message. Optional parts have to be at the end, and can be nested.
+	private function split_variants( array $tokens ) : array|string {
+		$variants = [];
+		$current = [];
+		$opened = 0;
+		$closed = 0;
+		$previous = '';
+		foreach ( $tokens as $token ) {
+			$type = $token['type'];
+			if ( $closed > 0 && $type !== ']' ) {
+				return 'optional parts must be at the end of the pattern';
+			}
+
+			if ( ( $type === '[' || $type === ']' ) && $previous === '[' ) {
+				return 'empty optional part [ ] in the pattern';
+			}
+
+			$previous = $type;
+			if ( $type === '[' ) {
+				$variants[] = $current;
+				$opened++;
+				continue;
+			}
+
+			if ( $type === ']' ) {
+				$closed++;
+				if ( $closed > $opened ) {
+					return 'unbalanced [ ] in the pattern';
+				}
+
+				continue;
+			}
+
+			// Join literals that meet across an optional part, so /blog[/{page}]
+			// gives one literal, /blog/, before {page}.
+			$last = \array_key_last( $current );
+			if ( $type === 'literal' && $last !== null && $current[$last]['type'] === 'literal' ) {
+				$current[$last]['text'] .= $token['text'];
+				continue;
+			}
+
+			$current[] = $token;
+		}
+
+		if ( $opened !== $closed ) {
+			return 'unbalanced [ ] in the pattern';
+		}
+
+		$variants[] = $current;
+		return $variants;
 	}
 
 	// The regex has to compile on its own, so it can't break out of the group
