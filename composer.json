@@ -8,9 +8,17 @@
 	},
 	"require-dev": {
 		"josephscott/phpcsfixer-config": "0.0.8",
-		"phpstan/phpstan": "2.3.6"
+		"phpstan/phpstan": "2.3.6",
+		"pestphp/pest": "5.3.5"
+	},
+	"autoload": {
+		"classmap": [
+			"src/"
+		]
 	},
 	"config": {
+		"classmap-authoritative": true,
+		"optimize-autoloader": true,
 		"allow-plugins": false
 	}
 }
