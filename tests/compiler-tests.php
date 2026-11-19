@@ -54,23 +54,38 @@ describe( 'compiled tables', function() {
 		expect( array_keys( $compiled['static']['GET'] ) )->toBe( [ '/blog', '/blog/archive', '/blog/archive/all' ] );
 	} );
 
-	it( 'gives each dynamic route a regex, keyed by its number of matches', function() {
+	// Each route ends in empty groups, so the number of matches says which
+	// route matched. Its leaf is the match, with the parameter names where
+	// their values go.
+	it( 'joins dynamic routes into one regex, told apart by the number of matches', function() {
 		$compiled = compile_routes( [
 			[ 'GET', '/users/{id:\d+}', 'page.php' ],
-			[ 'GET', '/users/{name}/posts', 'page.php' ],
 			[ 'GET', '/{a}-{b}', 'page.php' ],
 			[ 'GET', '/docs/{path:.+}', 'page.php' ],
 			[ 'GET', '/café/{id}', 'page.php' ],
 		] );
 
-		$match = fn ( int $route, array $params ) => [ count( $params ) + 1 => [ 'status' => 200, 'route' => $route, 'params' => $params ] ];
+		$leaf = fn ( int $route, array $names ) => [ 'status' => 200, 'route' => $route, 'params' => $names ];
 		expect( $compiled['dynamic']['GET'] )->toBe( [
-			'{^/users/(\d+)$}sD' => $match( 0, [ 'id' ] ),
-			'{^/users/([^/]++)/posts$}sD' => $match( 1, [ 'name' ] ),
-			'{^/([^/]+)\-([^/]++)$}sD' => $match( 2, [ 'a', 'b' ] ),
-			'{^/docs/(.+)(?<!/)$}sD' => $match( 3, [ 'path' ] ),
-			'{^/caf%C3%A9/([^/]++)$}sD' => $match( 4, [ 'id' ] ),
+			'{^(?|/users/(\d+)$|/([^/]+)\-([^/]++)$()()|/docs/(.+)(?<!/)$()|/caf%C3%A9/([^/]++)$()())}sD' => [
+				2 => $leaf( 0, [ 'id' ] ),
+				3 => $leaf( 2, [ 'path' ] ),
+				4 => $leaf( 3, [ 'id' ] ),
+				5 => $leaf( 1, [ 'a', 'b' ] ),
+			],
 		] );
+	} );
+
+	it( 'tells more routes apart by a MARK', function() {
+		$routes = [];
+		for ( $i = 0; $i <= Tillkite\Compiler::COUNT_LEAVES; $i++ ) {
+			$routes[] = [ 'GET', '/r' . $i . '/{id}', 'page.php' ];
+		}
+
+		$compiled = compile_routes( $routes );
+		$regex = array_key_first( $compiled['dynamic']['GET'] );
+		expect( $regex )->toStartWith( '{^(?|/r0/([^/]++)$(*:0)|/r1/([^/]++)$(*:1)|' );
+		expect( array_column( $compiled['dynamic']['GET'][$regex], 'route' ) )->toBe( range( 0, Tillkite\Compiler::COUNT_LEAVES ) );
 	} );
 
 	it( 'lets a last parameter that can match a / end with one when trailing_slash is true', function() {

@@ -16,6 +16,10 @@ final class Compiler {
 
 	public const string DEFAULT_REGEX = '[^/]+';
 
+	// A regex with up to this many routes tells them apart by the number of
+	// matches instead of a MARK. See leaf_ends().
+	public const int COUNT_LEAVES = 12;
+
 	// Custom parameter regexes that can't match a /: word characters, \d, \w,
 	// \. and \-, classes of those (ranges between letters and digits never
 	// include /), negated classes that list /, quantifiers, | and (?:...).
@@ -56,7 +60,7 @@ final class Compiler {
 	 * - static:  method => [ path => the match: [ 'status' => 200, ... ] ]
 	 * - dynamic: method => [ regex => [ key => the match, with the parameter
 	 *            names where their values go ] ], where the key is the
-	 *            regex's number of matches
+	 *            regex's MARK or its number of matches
 	 *
 	 * A route for '*' is added to every method's table, and also gets a '*'
 	 * table for methods that have no routes of their own.
@@ -93,7 +97,7 @@ final class Compiler {
 
 		foreach ( $this->table_keys( $parsed, $allowed ) as $table ) {
 			$static = [];
-			$dynamic = [];
+			$items = [];
 			foreach ( $parsed as $index => $entry ) {
 				if ( ! $this->applies( $entry['methods'], $table ) ) {
 					continue;
@@ -105,15 +109,12 @@ final class Compiler {
 						continue;
 					}
 
-					// Each value is a match, so the key is one more than the
-					// number of parameters.
-					$regex = '{^' . $variant['regex'] . '$}sD';
-					$dynamic[$regex] ??= [ \count( $variant['names'] ) + 1 => [ 'status' => 200, 'route' => $index, 'params' => $variant['names'] ] ];
+					$items[] = [ $index, $variant['pieces'], $variant['names'] ];
 				}
 			}
 
 			$compiled['static'][$table] = $static;
-			$compiled['dynamic'][$table] = $dynamic;
+			$compiled['dynamic'][$table] = $this->combine( $items );
 		}
 
 		\ksort( $this->entry_problems );
@@ -655,6 +656,114 @@ final class Compiler {
 			$text
 		);
 		return $encoded;
+	}
+
+	// Joins a table's [ route index, pieces, names ] items, in route order,
+	// into one regex, and returns [ regex => leaves ].
+	private function combine( array $items ) : array {
+		$regexes = [];
+		if ( $items === [] ) {
+			return $regexes;
+		}
+
+		$tree = [ 'children' => [] ];
+		foreach ( $items as [ $index, $pieces, $names ] ) {
+			$this->insert( $tree, $pieces, 0, [ 'status' => 200, 'route' => $index, 'params' => $names ] );
+		}
+
+		[ $ends, $leaves ] = $this->leaf_ends( $this->leaves( $tree ) );
+		$position = 0;
+		$regexes = [ '{^' . $this->render( $tree, $ends, $position ) . '}sD' => $leaves ];
+		return $regexes;
+	}
+
+	// The tree's leaves in the order PCRE tries them.
+	private function leaves( array $node ) : array {
+		$leaves = [];
+		foreach ( $node['children'] as $child ) {
+			if ( $child['piece'] === null ) {
+				$leaves[] = $child['leaf'];
+				continue;
+			}
+
+			\array_push( $leaves, ...$this->leaves( $child ) );
+		}
+
+		return $leaves;
+	}
+
+	// Returns [ ends, leaves ]: what ends each leaf's regex, and the leaves
+	// by the key the matcher finds them with.
+	//
+	// A regex with few leaves pads each one with empty groups, so the number
+	// of matches tells them apart, like FastRoute's GroupCountBased. That's
+	// cheaper than a MARK, which PHP adds to the matches as a new string.
+	// With more leaves, the padding would cost more than the MARK saves.
+	private function leaf_ends( array $leaves ) : array {
+		$ends = [];
+		$keys = [];
+		if ( \count( $leaves ) > self::COUNT_LEAVES ) {
+			foreach ( $leaves as $position => $leaf ) {
+				$ends[] = '$(*:' . $position . ')';
+				$keys[$position] = $leaf;
+			}
+
+			$result = [ $ends, $keys ];
+			return $result;
+		}
+
+		// Each leaf gets the smallest number of groups that's at least its
+		// parameter count and more than any leaf before it, fewest first.
+		$order = \array_keys( $leaves );
+		\usort( $order, fn ( $a, $b ) => \count( $leaves[$a]['params'] ) <=> \count( $leaves[$b]['params'] ) );
+		$groups = 0;
+		foreach ( $order as $position ) {
+			$params = \count( $leaves[$position]['params'] );
+			$groups = \max( $params, $groups + 1 );
+			$ends[$position] = '$' . \str_repeat( '()', $groups - $params );
+			$keys[$groups + 1] = $leaves[$position];
+		}
+
+		\ksort( $ends );
+		\ksort( $keys );
+		$result = [ $ends, $keys ];
+		return $result;
+	}
+
+	// Adds a route's pieces to the tree, one level per piece, ending in its
+	// leaf. PCRE tries a node's children in order, so each route starts a new
+	// child at the end.
+	private function insert( array &$node, array $pieces, int $depth, array $leaf ) : void {
+		if ( $depth === \count( $pieces ) ) {
+			$node['children'][] = [ 'piece' => null, 'leaf' => $leaf ];
+			return;
+		}
+
+		$position = \count( $node['children'] );
+		$node['children'][] = [ 'piece' => $pieces[$depth], 'children' => [] ];
+		$this->insert( $node['children'][$position], $pieces, $depth + 1, $leaf );
+	}
+
+	// Writes a tree node as a regex, with each child as an alternative.
+	// $position counts the leaves written so far.
+	private function render( array $node, array $ends, int &$position ) : string {
+		$alternatives = [];
+		foreach ( $node['children'] as $child ) {
+			if ( $child['piece'] === null ) {
+				$alternatives[] = $ends[$position];
+				$position++;
+				continue;
+			}
+
+			$alternatives[] = $child['piece']['regex'] . $this->render( $child, $ends, $position );
+		}
+
+		$regex = $alternatives[0];
+		if ( \count( $alternatives ) > 1 ) {
+			$regex = '(?|' . \implode( '|', $alternatives ) . ')';
+		}
+
+		return $regex;
 	}
 
 	// Returns the tables to build: each method used by a route, in the order
