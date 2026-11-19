@@ -21,6 +21,10 @@ class App {
 	// an absolute path. Empty means the directory of the routes file.
 	public string $handlers = '';
 
+	// The directory that template() names are relative to, as an absolute
+	// path. Empty means the handlers directory.
+	public string $templates = '';
+
 	// The URL prefix the app is mounted under, like /app.
 	public string $base = '';
 
@@ -46,6 +50,7 @@ class App {
 		'routes' => 'string',
 		'cache' => 'string',
 		'handlers' => 'string',
+		'templates' => 'string',
 		'base' => 'string',
 		'trailing_slash' => 'bool',
 		'buffer' => 'bool',
@@ -511,6 +516,66 @@ class App {
 	}
 
 	/**
+	 * Runs a template, a PHP file in the templates directory, and returns
+	 * what it printed:
+	 *
+	 *     echo $tillkite->template( 'post.php', [ 'post' => $post ] );
+	 *
+	 * It runs in a scope of its own, like a handler's, with only $tillkite
+	 * and $data, the array passed here. A template can call template() too,
+	 * for a layout or a part of a page. It works anywhere, even before
+	 * run(). A template that doesn't exist is a fatal error, as require
+	 * makes it.
+	 *
+	 * The name is a .php file in the templates directory, or a directory in
+	 * it, like 'posts/card.php'. Any other name, like one with a .. segment
+	 * or one for a file that isn't PHP, runs nothing: it logs that, and
+	 * returns ''.
+	 */
+	public function template( string $template, array $data = [] ) : string {
+		// PHP resolves .. itself, even after a directory that doesn't exist,
+		// so 'posts/../../.env' would print .env. require throws for a NUL.
+		if ( ! \str_ends_with( $template, '.php' ) || \str_contains( $template, "\0" ) || ( \str_contains( $template, '..' ) && \preg_match( '{(?:^|[/\\\\])\.\.(?:[/\\\\]|$)}', $template ) === 1 ) ) {
+			\error_log( "Tillkite: template() takes a .php file in the templates directory, so it ran nothing for '" . Escape::log( $template ) . "', and returned ''" );
+			$output = '';
+			return $output;
+		}
+
+		$dir = $this->templates;
+		if ( $dir === '' ) {
+			$dir = $this->handlers;
+		}
+
+		// Before run(), the handlers directory may not be worked out yet.
+		if ( $dir === '' ) {
+			$dir = \dirname( $this->routes );
+		}
+
+		// If the template throws, what it printed is thrown away, with any
+		// buffers it left, and the exception goes on to the caller. Nothing
+		// is caught. Buffers it left when it returns are its output too.
+		$output = '';
+		$level = \ob_get_level();
+		\ob_start();
+		try {
+			Runner::template( $this, $data, $dir . '/' . $template );
+			while ( \ob_get_level() > $level + 1 ) {
+				\ob_end_flush();
+			}
+
+			if ( \ob_get_level() > $level ) {
+				$output = (string) \ob_get_clean();
+			}
+		} finally {
+			while ( \ob_get_level() > $level ) {
+				\ob_end_clean();
+			}
+		}
+
+		return $output;
+	}
+
+	/**
 	 * Makes a value, like a database connection, available to the
 	 * before-files, handlers, error files and templates, which get it with
 	 * get():
@@ -691,7 +756,7 @@ class App {
 		}
 
 		$inside = \rtrim( $root, '/\\' ) . \DIRECTORY_SEPARATOR;
-		foreach ( [ 'handlers', 'cache' ] as $name ) {
+		foreach ( [ 'handlers', 'templates', 'cache' ] as $name ) {
 			$path = false;
 			if ( $this->$name !== '' ) {
 				$path = \realpath( $this->$name );
@@ -723,6 +788,10 @@ class App {
 		$paths = [ 'routes', 'handlers' ];
 		if ( $this->cache !== '' ) {
 			$paths[] = 'cache';
+		}
+
+		if ( $this->templates !== '' ) {
+			$paths[] = 'templates';
 		}
 
 		foreach ( $paths as $name ) {
