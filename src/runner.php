@@ -22,23 +22,35 @@ final class Runner {
 		return $routes;
 	}
 
-	// Runs the before-file, then the handler, in one scope, with $tillkite
-	// and the route's $params. The before-file's path can be '', for none. A
-	// before-file that returns false stops the handler. The error files run
-	// here too, as a handler with no before-file, and so does the before-file
-	// when no route matches, with no handler.
+	// Runs up to three before-files, in order, then the handler, in one
+	// scope, with $tillkite and the route's $params. Compiler has worked out
+	// which before-files a route runs, and the paths of the ones it doesn't
+	// are '', after the ones it does. A before-file that returns false stops
+	// the files after it. The error files run here too, as a handler with no
+	// before-files, and so do the before-files when no route matches, with no
+	// handler.
 	//
-	// The last argument is App's next_file(), which runs before the handler,
-	// with 'handler'. It returns false once a file has called error(), and
-	// then the handler doesn't run. When no route matches, it returns false in the handler's
-	// place.
+	// The last argument is App's next_file(), which runs before each
+	// before-file after the first, with 'before', and before the handler,
+	// with 'handler'. It returns false once a file has called error(), or a
+	// before-file has set a redirect or error status, and then the files
+	// after it don't run. When no route matches, it returns false in the
+	// handler's place.
 	public static function files( App $tillkite, array $params ) : void {
 		if ( \func_get_arg( 2 ) !== '' && ( require \func_get_arg( 2 ) ) === false ) {
 			return;
 		}
 
-		if ( \func_get_arg( 4 )( 'handler' ) ) {
-			require \func_get_arg( 3 );
+		if ( \func_get_arg( 3 ) !== '' && ( ! \func_get_arg( 6 )( 'before' ) || ( require \func_get_arg( 3 ) ) === false ) ) {
+			return;
+		}
+
+		if ( \func_get_arg( 4 ) !== '' && ( ! \func_get_arg( 6 )( 'before' ) || ( require \func_get_arg( 4 ) ) === false ) ) {
+			return;
+		}
+
+		if ( \func_get_arg( 6 )( 'handler' ) ) {
+			require \func_get_arg( 5 );
 		}
 	}
 

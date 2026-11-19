@@ -216,20 +216,16 @@ class App {
 		return true;
 	}
 
-	// Matches the request and runs the before-file and the route's handler.
-	// When matching fails, the response is a 500. A miss runs the before-file
-	// too, and only then gets its response, so a before-file that checks a
-	// login hides which paths exist.
+	// Matches the request and runs the route's before-files and handler.
+	// When matching fails, the response is a 500. A miss runs the app's
+	// before-file too, and only then gets its response, so a before-file
+	// that checks a login hides which paths exist.
 	private function respond( array $compiled, string $method, string $path, string $query ) : void {
-		$before = '';
-		if ( $this->before !== '' ) {
-			$before = $this->handlers . '/' . $this->before;
-		}
-
 		$result = $this->match( $compiled, $method, $path );
 		if ( $result['status'] === 200 ) {
 			$this->route = $compiled['routes'][$result['route']];
-			$this->run_route( $before, $this->handlers . '/' . $this->route[2], $result['params'] );
+			$files = $compiled['files'][$result['route']] ?? $compiled['default_files'];
+			$this->run_route( $this->route[2], $files, $result['params'] );
 			return;
 		}
 
@@ -239,7 +235,9 @@ class App {
 			return;
 		}
 
-		if ( $before !== '' && ! $this->run_miss_before( $before ) ) {
+		// A miss runs what a route with no options of its own would.
+		$files = $compiled['default_files'];
+		if ( $files[0] !== '' && ! $this->run_miss_before( $files ) ) {
 			return;
 		}
 
@@ -276,17 +274,19 @@ class App {
 		return $result;
 	}
 
-	// Runs the before-file and the handler.
-	private function run_route( string $before, string $handler, array $params ) : void {
-		$this->start( $this->buffer, $params );
+	// Runs a route's before-files and handler. Compiler has worked out the
+	// before-files, up to three, and the buffer option. See
+	// Compiler::compile().
+	private function run_route( string $handler, array $files, array $params ) : void {
+		$this->start( $files[3] ?? $this->buffer, $params );
 		$next = $this->next_file( ... );
-		if ( $before !== '' ) {
+		if ( $files[0] !== '' ) {
 			$this->timer->next( 'before' );
 			$next = $this->next_after_before( ... );
 		}
 
 		$this->in_route_files = true;
-		Runner::files( $this, $params, $before, $handler, $next );
+		Runner::files( $this, $params, $files[0], $files[1], $files[2], $this->handlers . '/' . $handler, $next );
 		$this->in_route_files = false;
 		if ( $this->error_code !== null ) {
 			$this->show_error( $this->error_code );
@@ -296,19 +296,24 @@ class App {
 		$this->finish();
 	}
 
-	// Runs a miss's before-file, with no handler after it. It's always
-	// buffered, because what it prints is thrown away before the response.
-	// Returns true when it ran through. When it returned false or set a
-	// redirect or error status, what it printed is sent instead, and when it
-	// called error(), its page is.
-	private function run_miss_before( string $before ) : bool {
+	// Runs a miss's before-files, with no handler after them. They're always
+	// buffered, because what they print is thrown away before the response.
+	// Returns true when they all ran. When one returned false or set a
+	// redirect or error status, what they printed is sent instead, and when
+	// one called error(), its page is.
+	private function run_miss_before( array $files ) : bool {
 		$this->start( true, [] );
 		$this->timer->next( 'before' );
 		$ran = false;
 		$this->in_route_files = true;
-		Runner::files( $this, [], $before, '', function() use ( &$ran ) : bool {
-			$ran = \http_response_code() < 300;
-			return false;
+		Runner::files( $this, [], $files[0], $files[1], $files[2], '', function( string $step ) use ( &$ran ) : bool {
+			if ( $step === 'handler' ) {
+				$ran = \http_response_code() < 300;
+				return false;
+			}
+
+			$next = $this->next_after_before( $step );
+			return $next;
 		} );
 		$this->in_route_files = false;
 		if ( $this->error_code !== null ) {
@@ -363,7 +368,7 @@ class App {
 
 		\http_response_code( $code );
 		$this->start( $this->buffer, $params );
-		Runner::files( $this, $params, '', $this->handlers . '/' . $file, fn () : bool => $this->next_file( 'error' ) );
+		Runner::files( $this, $params, '', '', '', $this->handlers . '/' . $file, fn () : bool => $this->next_file( 'error' ) );
 		$this->finish();
 	}
 
@@ -395,13 +400,15 @@ class App {
 		$this->run_error( $code, $this->params );
 	}
 
-	// Runner calls it before the handler or error file. It returns false once
-	// a file has called error(), so no file after that one runs. Otherwise, it
-	// starts that step's timing. When the files aren't buffered, that file's
-	// output may send the headers, so the Server-Timing header goes out now.
+	// Runner calls it before each before-file after the first, with 'before',
+	// and before the handler or error file. It returns false once a file has
+	// called error(), so no file after that one runs. Before the handler or
+	// error file, it starts that step's timing. When the files aren't
+	// buffered, that file's output may send the headers, so the
+	// Server-Timing header goes out now.
 	private function next_file( string $step ) : bool {
 		$next = $this->error_code === null;
-		if ( $next ) {
+		if ( $next && $step !== 'before' ) {
 			$this->timer->next( $step );
 			if ( $this->level === null ) {
 				$this->send_timing();

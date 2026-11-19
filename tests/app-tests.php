@@ -129,23 +129,34 @@ describe( 'routing', function() {
 		expect( request( 'GET', '/\\example.com/', $options )['status'] )->toBe( 404 );
 	} );
 
-	it( "runs the before-file in the handler's scope", function() {
-		expect( request( 'GET', '/scope', [ 'before' => 'before.php' ] )['body'] )->toBe( '{"vars":["tillkite","params","from_before"],"private":false}' );
-	} );
+	// The handler's variables show which before-files ran, and in what order.
+	it( "runs the app's before-file, then the route's, in the handler's scope", function( string $path, array $options, array $vars ) {
+		$body = json_decode( request( 'GET', $path, $options )['body'], true );
 
-	it( 'stops at a before-file that returns false, before the handler or the 404', function( string $target ) {
+		expect( $body['vars'] )->toBe( [ 'tillkite', 'params', ...$vars ] );
+	} )->with( [
+		"the app's" => [ '/scope', [ 'before' => 'before.php' ], [ 'from_before' ] ],
+		"the app's, then the route's" => [ '/scope/own-before', [ 'before' => 'before.php' ], [ 'from_before', 'from_route_before' ] ],
+		"the route's, with none for the app" => [ '/scope/own-before', [], [ 'from_route_before' ] ],
+		"only the route's, with before_only" => [ '/scope/only-before', [ 'before' => 'before.php' ], [ 'from_route_before' ] ],
+		"none, with 'before' => false" => [ '/scope/no-before', [ 'before' => 'before.php' ], [] ],
+	] );
+
+	it( 'stops at a before-file that returns false, before any later before-file, the handler or the 404', function( string $target ) {
 		$response = request( 'GET', $target, [ 'before' => 'deny.php' ] );
 
 		expect( $response['status'] )->toBe( 401 );
 		expect( $response['body'] )->toBe( 'denied' );
-	} )->with( [ 'a route' => [ '/scope' ], 'a miss' => [ '/nowhere' ] ] );
+		expect( $response['headers'] )->not->toHaveKey( 'x-route-before' );
+	} )->with( [ 'a route' => [ '/scope/own-before' ], 'a miss' => [ '/nowhere' ] ] );
 
 	it( "stops at a before-file that redirects or sets an error status, even when it doesn't return false", function( string $target, string $before, int $status, string $body, ?string $location ) {
 		$response = request( 'GET', $target, [ 'before' => $before ] );
 
 		expect( [ $response['status'], $response['body'], $response['headers']['location'] ?? null ] )->toBe( [ $status, $body, $location ] );
+		expect( $response['headers'] )->not->toHaveKey( 'x-route-before' );
 	} )->with( [
-		'a redirect, before the handler' => [ '/', 'redirect-before.php', 302, 'signing in', '/sign-in' ],
+		'a redirect, before a later before-file and the handler' => [ '/scope/own-before', 'redirect-before.php', 302, 'signing in', '/sign-in' ],
 		'an error status' => [ '/', 'forbid-before.php', 403, 'forbidden', null ],
 		'a redirect, in place of a 404' => [ '/nope', 'redirect-before.php', 302, 'signing in', '/sign-in' ],
 		'a status under 300' => [ '/', 'created-before.php', 201, 'text', '/new' ],
@@ -153,7 +164,9 @@ describe( 'routing', function() {
 
 	it( 'buffers output, so a header can come after it, unless buffering is off', function() {
 		expect( request( 'GET', '/late-header' )['headers'] )->toHaveKey( 'x-late' );
+		expect( request( 'GET', '/late-header/unbuffered' )['headers'] )->not->toHaveKey( 'x-late' );
 		expect( request( 'GET', '/late-header', [ 'buffer' => false ] )['headers'] )->not->toHaveKey( 'x-late' );
+		expect( request( 'GET', '/late-header/buffered', [ 'buffer' => false ] )['headers'] )->toHaveKey( 'x-late' );
 	} );
 
 	it( 'copes with a handler that ends the buffer itself', function() {
