@@ -41,6 +41,17 @@ final class Compiler {
 	// share a few, like the default.
 	private array $regex_errors = [];
 
+	/**
+	 * Returns the compiled tables:
+	 *
+	 * - routes:  each route as written
+	 * - static:  method => [ path => the match: [ 'status' => 200, ... ] ]
+	 *
+	 * A route for '*' is added to every method's table, and also gets a '*'
+	 * table for methods that have no routes of their own.
+	 *
+	 * Routes are numbered by their place in the list, starting at 0.
+	 */
 	public function compile( array $routes ) : array {
 		$this->problems = [];
 		$this->entries = [];
@@ -49,6 +60,7 @@ final class Compiler {
 
 		$compiled = [
 			'routes' => [],
+			'static' => [],
 		];
 
 		$allowed = $this->check_settings();
@@ -58,11 +70,31 @@ final class Compiler {
 		}
 
 		$this->list_routes( $routes );
+		$parsed = [];
 		foreach ( \array_keys( $this->entries ) as $index ) {
 			$entry = $this->parse_route( $index, $allowed );
 			if ( $entry !== null ) {
+				$parsed[$index] = $entry;
 				$compiled['routes'][$index] = $entry['route'];
 			}
+		}
+
+		foreach ( $this->table_keys( $parsed, $allowed ) as $table ) {
+			$static = [];
+			foreach ( $parsed as $index => $entry ) {
+				if ( ! $this->applies( $entry['methods'], $table ) ) {
+					continue;
+				}
+
+				// Only a variant without parameters has a path of its own.
+				foreach ( $entry['variants'] as $variant ) {
+					if ( $variant['names'] === [] ) {
+						$static[$variant['path']] ??= $index;
+					}
+				}
+			}
+
+			$compiled['static'][$table] = $static;
 		}
 
 		\ksort( $this->entry_problems );
@@ -70,6 +102,14 @@ final class Compiler {
 			$start = $this->names[$name][0] . ' ' . $this->export( $this->names[$name][1] ) . ': ';
 			foreach ( $messages as $message ) {
 				$this->problems[] = $start . $message;
+			}
+		}
+
+		// A static route's match is always the same, so it's stored ready to
+		// return. Coming from OPcache, it costs nothing to build.
+		foreach ( $compiled['static'] as $table => $paths ) {
+			foreach ( $paths as $path => $index ) {
+				$compiled['static'][$table][$path] = [ 'status' => 200, 'route' => $index, 'params' => [] ];
 			}
 		}
 
@@ -217,7 +257,7 @@ final class Compiler {
 		return $error;
 	}
 
-	// Returns the token list for each variant, or a problem message. Each
+	// Returns the variants, or a problem message. Each
 	// optional part adds a variant: /blog[/{page}] has the variants /blog and
 	// /blog/{page}.
 	private function parse_pattern( string $pattern ) : array|string {
@@ -243,7 +283,16 @@ final class Compiler {
 			$names[] = $token['name'];
 		}
 
-		$variants = $this->split_variants( $tokens );
+		$split = $this->split_variants( $tokens );
+		if ( \is_string( $split ) ) {
+			return $split;
+		}
+
+		$variants = [];
+		foreach ( $split as $variant_tokens ) {
+			$variants[] = $this->compile_variant( $variant_tokens );
+		}
+
 		return $variants;
 	}
 
@@ -413,6 +462,73 @@ final class Compiler {
 
 		$variants[] = $current;
 		return $variants;
+	}
+
+	// Returns [ 'source', 'path', 'names' ]: the variant as written, its path
+	// as a request sends it, and its parameter names.
+	private function compile_variant( array $tokens ) : array {
+		$source = '';
+		$path = '';
+		$names = [];
+		foreach ( $tokens as $token ) {
+			if ( $token['type'] === 'literal' ) {
+				$source .= $token['text'];
+				$path .= $this->encode( $token['text'] );
+				continue;
+			}
+
+			$names[] = $token['name'];
+			$source .= $token['source'];
+		}
+
+		$variant = [
+			'source' => $source,
+			'path' => $path,
+			'names' => $names,
+		];
+		return $variant;
+	}
+
+	// Browsers send non-ASCII characters percent-encoded, with uppercase hex.
+	private function encode( string $text ) : string {
+		$encoded = (string) \preg_replace_callback(
+			'/[\x80-\xFF]+/',
+			fn ( $matches ) => \rawurlencode( $matches[0] ),
+			$text
+		);
+		return $encoded;
+	}
+
+	// Returns the tables to build: each method used by a route, in the order
+	// of the allowed list, then '*' if any route uses it.
+	private function table_keys( array $parsed, array $allowed ) : array {
+		$used = [];
+		foreach ( $parsed as $entry ) {
+			foreach ( $entry['methods'] as $method ) {
+				$used[$method] = true;
+			}
+		}
+
+		$keys = [];
+		foreach ( $allowed as $method ) {
+			if ( isset( $used[$method] ) ) {
+				$keys[] = $method;
+			}
+		}
+
+		if ( isset( $used['*'] ) ) {
+			$keys[] = '*';
+		}
+
+		return $keys;
+	}
+
+	private function applies( array $methods, string $table ) : bool {
+		if ( $methods === [ '*' ] || \in_array( $table, $methods, true ) ) {
+			return true;
+		}
+
+		return false;
 	}
 
 	// The regex has to compile on its own, so it can't break out of the group

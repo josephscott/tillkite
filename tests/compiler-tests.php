@@ -10,6 +10,55 @@ describe( 'compiled tables', function() {
 
 		expect( $compiled['routes'] )->toBe( [ [ 'GET', '/', 'page.php' ], [ 'POST', '/users', 'page.php', [] ] ] );
 	} );
+
+	it( 'puts static routes in one hash table per method, ready to return, and GET also answers HEAD', function() {
+		$compiled = compile_routes( [
+			[ 'GET', '/', 'page.php' ],
+			[ 'POST', '/users', 'page.php' ],
+		] );
+
+		$match = fn ( int $route ) => [ 'status' => 200, 'route' => $route, 'params' => [] ];
+		expect( $compiled['static'] )->toBe( [
+			'GET' => [ '/' => $match( 0 ) ],
+			'HEAD' => [ '/' => $match( 0 ) ],
+			'POST' => [ '/users' => $match( 1 ) ],
+		] );
+	} );
+
+	it( "adds '*' routes to every table, plus a '*' table of their own", function() {
+		$compiled = compile_routes( [
+			[ 'GET', '/', 'page.php' ],
+			[ '*', '/webhook', 'page.php' ],
+		] );
+
+		expect( array_map( 'array_keys', $compiled['static'] ) )->toBe( [
+			'GET' => [ '/', '/webhook' ],
+			'HEAD' => [ '/', '/webhook' ],
+			'*' => [ '/webhook' ],
+		] );
+	} );
+
+	it( 'keeps the first route for a path', function() {
+		$compiled = compile_routes( [
+			[ 'GET', '/a', 'page.php' ],
+			[ [ 'GET', 'POST' ], '/a', 'page.php' ],
+		] );
+
+		expect( array_map( fn ( $paths ) => array_column( $paths, 'route' ), $compiled['static'] ) )
+			->toBe( [ 'GET' => [ 0 ], 'HEAD' => [ 0 ], 'POST' => [ 1 ] ] );
+	} );
+
+	it( 'puts each static variant of an optional part in the table', function() {
+		$compiled = compile_routes( [ [ 'GET', '/blog[/archive[/all]]', 'page.php' ] ] );
+
+		expect( array_keys( $compiled['static']['GET'] ) )->toBe( [ '/blog', '/blog/archive', '/blog/archive/all' ] );
+	} );
+
+	it( 'stores a non-ASCII literal by its percent-encoded form', function() {
+		$compiled = compile_routes( [ [ 'GET', '/café', 'page.php' ] ] );
+
+		expect( array_keys( $compiled['static']['GET'] ) )->toBe( [ '/caf%C3%A9' ] );
+	} );
 } );
 
 describe( 'problems', function() {
