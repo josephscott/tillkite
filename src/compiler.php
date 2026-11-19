@@ -16,6 +16,8 @@ final class Compiler {
 
 	public const string DEFAULT_REGEX = '[^/]+';
 
+	public const array ROUTE_OPTIONS = [ 'buffer', 'before', 'before_only' ];
+
 	// A regex with up to this many routes tells them apart by the number of
 	// matches instead of a MARK. See leaf_ends().
 	public const int COUNT_LEAVES = 12;
@@ -39,7 +41,8 @@ final class Compiler {
 	public array $problems = [];
 
 	// Every route: [ 'route' => as written, 'label' => like '3', 'name' => its
-	// key in $names ].
+	// key in $names, 'chain' => the before-files that run ahead of its own
+	// (see add_before()) ].
 	private array $entries = [];
 
 	// What each route's problems start with, in the order of the routes
@@ -68,6 +71,11 @@ final class Compiler {
 	 *            regex's MARK or its number of matches
 	 * - any:     [ 'static' => ..., 'dynamic' => ... ] for every route of
 	 *            every method, matching with or without a trailing slash
+	 * - default_files: what a route runs that has no before or buffer
+	 *            options: the paths of its before-files in the order they
+	 *            run, with '' for each one fewer than three, then its buffer
+	 *            option, or null for the app's
+	 * - files:   the same for each route that runs something else
 	 *
 	 * A route for '*' is added to every method's table, and also gets a '*'
 	 * table for methods that have no routes of their own.
@@ -86,12 +94,20 @@ final class Compiler {
 			'static' => [],
 			'dynamic' => [],
 			'any' => [ 'static' => [], 'dynamic' => [] ],
+			'default_files' => [ '', '', '', null ],
+			'files' => [],
 		];
 
 		$allowed = $this->check_settings();
 		if ( ! \array_is_list( $routes ) ) {
 			$this->problems[] = 'The routes file must return a list of routes, without keys.';
 			return $compiled;
+		}
+
+		// Most routes run only the app's before-file, so only the others take
+		// room in the cache.
+		if ( $this->before !== null ) {
+			$compiled['default_files'][0] = $this->path( $this->before );
 		}
 
 		$this->list_routes( $routes );
@@ -104,6 +120,10 @@ final class Compiler {
 				$checks = \array_merge( ...\array_column( $entry['variants'], 'checks' ) );
 				if ( $checks !== [] ) {
 					$compiled['checks'][$index] = $checks;
+				}
+
+				if ( $entry['files'] !== $compiled['default_files'] ) {
+					$compiled['files'][$index] = $entry['files'];
 				}
 			}
 		}
@@ -273,25 +293,64 @@ final class Compiler {
 	}
 
 	private function list_routes( array $routes ) : void {
+		$chain = [];
+		if ( $this->before !== null ) {
+			$chain[] = [ $this->before, "the app's" ];
+		}
+
 		foreach ( $routes as $position => $route ) {
-			$this->add_entry( (string) ( $position + 1 ), $route );
+			$this->add_entry( (string) ( $position + 1 ), $route, $chain );
 		}
 	}
 
-	private function add_entry( string $label, mixed $route ) : void {
+	private function add_entry( string $label, mixed $route, array $chain ) : void {
 		$this->names[] = [ 'Route ' . $label, $route ];
 		$this->entries[] = [
 			'route' => $route,
 			'label' => $label,
 			'name' => \array_key_last( $this->names ),
+			'chain' => $chain,
 		];
 	}
 
+	// Returns the before-files that run for a route, from the app's and its
+	// own options. 'before' adds a file after them, 'before_only' runs a file
+	// in their place, and 'before' => false runs none. Each is [ file, whose
+	// it is ], starting with [ the app's before file, "the app's" ]. Returns a
+	// problem message when the route's before file runs already.
+	private function add_before( array $chain, array $options, string $whose ) : array|string {
+		if ( isset( $options['before_only'] ) ) {
+			$chain = [ [ $options['before_only'], $whose ] ];
+			return $chain;
+		}
+
+		$before = $options['before'] ?? null;
+		if ( $before === false ) {
+			$chain = [];
+			return $chain;
+		}
+
+		if ( $before === null ) {
+			return $chain;
+		}
+
+		foreach ( $chain as [ $file, $file_whose ] ) {
+			if ( $this->same_file( $before, $file ) ) {
+				$error = 'the before file is ' . $file_whose . ' before file too, so it would run twice';
+				return $error;
+			}
+		}
+
+		$chain[] = [ $before, $whose ];
+		return $chain;
+	}
+
 	// Returns [ 'methods' => as parse_methods() returns them, 'variants' =>
-	// as parse_pattern() returns them, 'route' => as written ], or null when
-	// the route has problems.
+	// as parse_pattern() returns them, 'route' => as written, 'files' => what
+	// it runs, as compile() describes ], or null when the route has problems.
 	private function parse_route( int $index, array $allowed ) : ?array {
-		$route = $this->entries[$index]['route'];
+		$entry = $this->entries[$index];
+		$route = $entry['route'];
 		if ( ! \is_array( $route ) || ! \array_is_list( $route ) || \count( $route ) < 3 || \count( $route ) > 4 ) {
 			$this->route_problem( $index, 'each route must be [ method, pattern, file ], with optional route options' );
 			return null;
@@ -319,6 +378,36 @@ final class Compiler {
 			$errors[] = "the file doesn't exist: " . $this->path( $file );
 		}
 
+		$options = $route[3] ?? [];
+		if ( ! \is_array( $options ) || ( $options !== [] && \array_is_list( $options ) ) ) {
+			$errors[] = "route options must be an array, like [ 'buffer' => false ]";
+			$options = [];
+		}
+
+		$options_valid = true;
+		foreach ( $options as $key => $value ) {
+			$error = $this->option_error( $key, $value );
+			if ( $error !== '' ) {
+				$errors[] = $error;
+				$options_valid = false;
+			}
+		}
+
+		if ( isset( $options['before'], $options['before_only'] ) ) {
+			$errors[] = 'use before or before_only, not both';
+			$options_valid = false;
+		}
+
+		$chain = $entry['chain'];
+		if ( $options_valid ) {
+			$added = $this->add_before( $chain, $options, "the route's" );
+			if ( \is_string( $added ) ) {
+				$errors[] = $added;
+			} else {
+				$chain = $added;
+			}
+		}
+
 		foreach ( $errors as $error ) {
 			$this->route_problem( $index, $error );
 		}
@@ -331,8 +420,21 @@ final class Compiler {
 			'methods' => $methods,
 			'variants' => $pattern,
 			'route' => $route,
+			'files' => $this->files( $chain, $options['buffer'] ?? null ),
 		];
 		return $parsed;
+	}
+
+	// What a route runs, as compile() describes it: the paths of the
+	// before-files in $chain, with '' for each one fewer than three, then its
+	// buffer option.
+	private function files( array $chain, ?bool $buffer ) : array {
+		$files = [ '', '', '', $buffer ];
+		foreach ( $chain as $position => [ $before ] ) {
+			$files[$position] = $this->path( $before );
+		}
+
+		return $files;
 	}
 
 	// Returns the sorted list of methods, or a problem message. A GET route
@@ -382,6 +484,36 @@ final class Compiler {
 		}
 
 		return $error;
+	}
+
+	private function option_error( int|string $key, mixed $value ) : string {
+		$error = '';
+		if ( ! \in_array( $key, self::ROUTE_OPTIONS, true ) ) {
+			$error = "unknown route option '" . $key . "'";
+		} elseif ( $key === 'buffer' && ! \is_bool( $value ) ) {
+			$error = 'the buffer option must be true or false';
+		} elseif ( $key === 'before' && $value !== false && ( ! \is_string( $value ) || $value === '' ) ) {
+			$error = 'the before option must be a file name or false';
+		} elseif ( $key === 'before' && \is_string( $value ) && ! $this->file_exists( $value ) ) {
+			$error = "the before file doesn't exist: " . $this->path( $value );
+		} elseif ( $key === 'before_only' && ( ! \is_string( $value ) || $value === '' ) ) {
+			$error = "the before_only option must be a file name. For no before-file, use 'before' => false";
+		} elseif ( $key === 'before_only' && ! $this->file_exists( $value ) ) {
+			$error = "the before_only file doesn't exist: " . $this->path( $value );
+		}
+
+		return $error;
+	}
+
+	// Whether two file names, relative to handlers, are the same file.
+	private function same_file( string $a, string $b ) : bool {
+		$same = $a === $b;
+		if ( ! $same ) {
+			$real = \realpath( $this->path( $a ) );
+			$same = $real !== false && $real === \realpath( $this->path( $b ) );
+		}
+
+		return $same;
 	}
 
 	// Returns the variants, or a problem message. Each

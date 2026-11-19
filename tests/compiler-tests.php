@@ -183,6 +183,25 @@ describe( 'compiled tables', function() {
 
 		expect( array_keys( $compiled['static']['GET'] ) )->toBe( [ '/caf%C3%A9' ] );
 	} );
+
+	// The app's before file is before.php. A route's files are the
+	// before-files that run, in order, then its buffer option. A route that
+	// runs only the app's, with the app's buffer setting, isn't in files.
+	it( "works out each route's files from the app's and its own options", function( array $options, array $before, ?bool $buffer ) {
+		$compiled = compile_routes( [
+			[ 'GET', '/', 'page.php' ],
+			[ 'GET', '/b', 'page.php', $options ],
+		], [ 'before' => 'before.php' ] );
+
+		$path = fn ( string $file ) => __DIR__ . '/fixtures/handlers/' . $file;
+		expect( $compiled['default_files'] )->toBe( [ $path( 'before.php' ), '', '', null ] );
+		expect( $compiled['files'] )->toBe( [ 1 => [ ...array_pad( array_map( $path, $before ), 3, '' ), $buffer ] ] );
+	} )->with( [
+		"the route's after the app's" => [ [ 'before' => 'route-before.php' ], [ 'before.php', 'route-before.php' ], null ],
+		"only the route's" => [ [ 'before_only' => 'route-before.php' ], [ 'route-before.php' ], null ],
+		'none' => [ [ 'before' => false ], [], null ],
+		"the route's buffer option" => [ [ 'buffer' => false ], [ 'before.php' ], false ],
+	] );
 } );
 
 describe( 'problems', function() {
@@ -209,7 +228,23 @@ describe( 'problems', function() {
 		'keyed' => [ [ 'method' => 'GET', 'pattern' => '/', 'file' => 'page.php' ], 'each route must be [ method, pattern, file ], with optional route options' ],
 		'pattern not a string' => [ [ 'GET', 42, 'page.php' ], 'the pattern must be a string' ],
 		'empty file' => [ [ 'GET', '/', '' ], 'the file must be a file name' ],
+		'options a list' => [ [ 'GET', '/', 'page.php', [ false ] ], "route options must be an array, like [ 'buffer' => false ]" ],
+		'unknown option' => [ [ 'GET', '/', 'page.php', [ 'cache' => true ] ], "unknown route option 'cache'" ],
+		'buffer not a bool' => [ [ 'GET', '/', 'page.php', [ 'buffer' => 'no' ] ], 'the buffer option must be true or false' ],
+		'before not a file' => [ [ 'GET', '/', 'page.php', [ 'before' => true ] ], 'the before option must be a file name or false' ],
+		'before missing' => [ [ 'GET', '/', 'page.php', [ 'before' => 'missing.php' ] ], "the before file doesn't exist: " . __DIR__ . '/fixtures/handlers/missing.php' ],
+		'before_only false' => [ [ 'GET', '/', 'page.php', [ 'before_only' => false ] ], "the before_only option must be a file name. For no before-file, use 'before' => false" ],
+		'before_only missing' => [ [ 'GET', '/', 'page.php', [ 'before_only' => 'missing.php' ] ], "the before_only file doesn't exist: " . __DIR__ . '/fixtures/handlers/missing.php' ],
+		'before and before_only' => [ [ 'GET', '/', 'page.php', [ 'before' => 'before.php', 'before_only' => 'before.php' ] ], 'use before or before_only, not both' ],
 	] );
+
+	// ./before.php names the same file as before.php.
+	it( "reports a route's before-file that's the app's, so it would run twice", function() {
+		$problems = route_problems( [ [ 'GET', '/', 'page.php', [ 'before' => './before.php' ] ] ], [ 'before' => 'before.php' ] );
+
+		expect( $problems )->toHaveCount( 1 );
+		expect( $problems[0] )->toEndWith( "the before file is the app's before file too, so it would run twice" );
+	} );
 
 	it( 'reports a bad method', function( mixed $method, string $message ) {
 		$problems = route_problems( [ [ $method, '/', 'page.php' ] ] );
