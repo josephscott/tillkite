@@ -30,6 +30,7 @@ describe( 'configuration problems', function() {
 		'no routes' => [ [ 'routes' => '' ], 'The routes option is required.' ],
 		'relative routes' => [ [ 'routes' => 'routes.php' ], 'The routes option must be an absolute path, built from __DIR__: routes.php' ],
 		'relative handlers' => [ [ 'handlers' => 'handlers' ], 'The handlers option must be an absolute path, built from __DIR__: handlers' ],
+		'relative cache' => [ [ 'cache' => 'var' ], 'The cache option must be an absolute path, built from __DIR__: var' ],
 		'missing routes file' => [ [ 'routes' => '/nowhere/routes.php' ], "The routes file doesn't exist: /nowhere/routes.php" ],
 		'not an array' => [ [ 'routes' => __DIR__ . '/fixtures/handlers/page.php' ], 'The routes file must return an array of routes, not int' ],
 	] );
@@ -241,5 +242,80 @@ describe( 'fatal errors', function() {
 
 		expect( $response['status'] )->toBe( 500 );
 		expect( $response['body'] )->toStartWith( 'partial' )->toContain( 'Uncaught RuntimeException: boom' );
+	} );
+} );
+
+describe( 'the route cache', function() {
+	it( 'compiles the routes once, and again when the routes file changes', function() {
+		$dir = temp_dir();
+		mkdir( $dir . '/var' );
+		$options = [ 'routes' => $dir . '/routes.php', 'handlers' => SITE . '/handlers', 'cache' => $dir . '/var' ];
+		$mtime = time() - 60;
+
+		// A routes file that notes each time it runs.
+		file_put_contents( $dir . '/routes.php', "<?php file_put_contents( __DIR__ . '/ran', 'x', FILE_APPEND ); return [ [ 'GET', '/a', 'text.php' ] ];\n" );
+		touch( $dir . '/routes.php', $mtime );
+		expect( request( 'GET', '/a', $options )['body'] )->toBe( 'text' );
+		expect( request( 'GET', '/a', $options )['body'] )->toBe( 'text' );
+		expect( file_get_contents( $dir . '/ran' ) )->toBe( 'x' );
+
+		// A new modification time. OPcache still has the old routes file, so
+		// this also checks that Tillkite clears it, and that the old cache
+		// file is removed.
+		write_routes( $dir . '/routes.php', '/b', $mtime + 30 );
+		expect( request( 'GET', '/b', $options )['body'] )->toBe( 'text' );
+		expect( scandir( $dir . '/var' ) )->toHaveCount( 3 );
+	} );
+
+	// As a plain PHP script, as under php-fpm, with no wait for OPcache, which
+	// the command line doesn't use.
+	it( 'compiles the routes again when a file that the routes file loaded changes', function() {
+		$dir = temp_dir();
+		mkdir( $dir . '/var' );
+		file_put_contents( $dir . '/routes.php', "<?php return require __DIR__ . '/more.php';\n" );
+		file_put_contents( $dir . '/more.php', "<?php return [ [ 'GET', '/a', 'text.php' ] ];\n" );
+		$get = function( string $path ) use ( $dir ) : string {
+			$options = [ 'routes' => $dir . '/routes.php', 'handlers' => SITE . '/handlers', 'cache' => $dir . '/var' ];
+			$environment = [ 'REQUEST_URI' => $path, 'REQUEST_METHOD' => 'GET', 'HTTP_X_OPTIONS' => json_encode( $options ) ];
+			$command = [ PHP_BINARY, '-d', 'display_errors=0', '-d', 'opcache.revalidate_freq=-1', SITE . '/public/index.php' ];
+			$process = proc_open( $command, [ [ 'file', '/dev/null', 'r' ], [ 'pipe', 'w' ], [ 'file', '/dev/null', 'w' ] ], $pipes, null, $environment );
+			$body = (string) stream_get_contents( $pipes[1] );
+			proc_close( $process );
+			return $body;
+		};
+
+		expect( $get( '/a' ) )->toBe( 'text' );
+		$cached = include glob( $dir . '/var/tillkite-*.php' )[0];
+		expect( array_keys( $cached['includes'] ) )->toBe( [ realpath( $dir . '/more.php' ) ] );
+
+		file_put_contents( $dir . '/more.php', "<?php return [ [ 'GET', '/changed', 'text.php' ] ];\n" );
+		expect( $get( '/changed' ) )->toBe( 'text' );
+		expect( $get( '/a' ) )->toBe( "404 Not Found\n" );
+	} );
+
+	// The tests run under php -S, where Tillkite's own files are in the key.
+	// A new modification time for the compiler's file is enough.
+	it( "uses a new cache file under php -S when one of Tillkite's own files changes", function() {
+		$dir = temp_dir();
+		$options = [ 'cache' => $dir ];
+		request( 'GET', '/', $options );
+		$first = scandir( $dir );
+
+		$file = (string) ( new ReflectionClass( Tillkite\Compiler::class ) )->getFileName();
+		$mtime = (int) filemtime( $file );
+		touch( $file, $mtime + 1 );
+		$body = request( 'GET', '/', $options )['body'];
+		touch( $file, $mtime );
+
+		expect( $body )->toBe( 'text' );
+		expect( scandir( $dir ) )->toHaveCount( 3 );
+		expect( scandir( $dir ) )->not->toBe( $first );
+	} );
+
+	it( "doesn't cache routes that have problems", function() {
+		$dir = temp_dir();
+
+		expect( request( 'GET', '/', [ 'routes' => SITE . '/problem-routes.php', 'cache' => $dir ] )['status'] )->toBe( 500 );
+		expect( scandir( $dir ) )->toBe( [ '.', '..' ] );
 	} );
 } );

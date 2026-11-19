@@ -13,6 +13,10 @@ class App {
 	// The PHP file that returns the routes, as an absolute path.
 	public string $routes = '';
 
+	// The directory for the compiled route cache, as an absolute path. Empty
+	// means the routes are compiled on every request.
+	public string $cache = '';
+
 	// The directory that handler, before and error files are relative to, as
 	// an absolute path. Empty means the directory of the routes file.
 	public string $handlers = '';
@@ -37,6 +41,7 @@ class App {
 	// Each option and the type it takes.
 	private const array OPTIONS = [
 		'routes' => 'string',
+		'cache' => 'string',
 		'handlers' => 'string',
 		'trailing_slash' => 'bool',
 		'buffer' => 'bool',
@@ -79,6 +84,9 @@ class App {
 		451 => 'Unavailable For Legal Reasons',
 		500 => 'Internal Server Error',
 	];
+
+	// Tillkite's version. A release sets it.
+	private const string VERSION = '0.0.0';
 
 	// The errors that end a request without an exception, such as running
 	// out of memory or time, or an uncaught exception with no 500 file.
@@ -446,8 +454,8 @@ class App {
 		return false;
 	}
 
-	// Loads the routes file and compiles it. Every problem found goes into
-	// $problems.
+	// Reads the compiled routes from the cache, or loads the routes file and
+	// compiles it. Every problem found goes into $problems.
 	private function compile() : array {
 		$compiled = [];
 		if ( $this->routes === '' ) {
@@ -459,7 +467,12 @@ class App {
 			$this->handlers = \dirname( $this->routes );
 		}
 
-		foreach ( [ 'routes', 'handlers' ] as $name ) {
+		$paths = [ 'routes', 'handlers' ];
+		if ( $this->cache !== '' ) {
+			$paths[] = 'cache';
+		}
+
+		foreach ( $paths as $name ) {
 			if ( ! $this->is_absolute( $this->$name ) ) {
 				$this->problems[] = 'The ' . $name . ' option must be an absolute path, built from __DIR__: ' . $this->$name;
 				return $compiled;
@@ -471,7 +484,38 @@ class App {
 			return $compiled;
 		}
 
+		$cache = null;
+		if ( $this->cache !== '' ) {
+			// Every setting that changes the compiled routes or the problems found,
+			// and Tillkite's code. Encoding only the arrays keeps this quick.
+			$settings = self::VERSION . "\n" . $this->handlers . "\n" . $this->before . "\n" . (int) $this->trailing_slash . \json_encode( [ $this->methods, $this->errors ] );
+			if ( \PHP_SAPI === 'cli-server' ) {
+				$settings .= $this->source_times();
+			}
+
+			$cache = new Cache( $this->cache, $this->routes, $settings );
+			$cached = $cache->read();
+			if ( $cached !== null ) {
+				return $cached;
+			}
+
+			$cache->clear_routes();
+		}
+
+		// With a cache, the files that the routes file loads are noted, so a
+		// change to one is noticed. Runner has to be loaded first, to not be one.
+		$loaded = [];
+		if ( $cache !== null ) {
+			\class_exists( Runner::class );
+			$loaded = \get_included_files();
+		}
+
 		$routes = Runner::routes( $this->routes );
+		$included = [];
+		if ( $cache !== null ) {
+			$included = \array_diff( \get_included_files(), $loaded, [ \realpath( $this->routes ) ] );
+		}
+
 		if ( ! \is_array( $routes ) ) {
 			$this->problems[] = 'The routes file must return an array of routes, not ' . \get_debug_type( $routes );
 			return $compiled;
@@ -488,6 +532,51 @@ class App {
 
 		$compiled = $compiler->compile( $routes );
 		\array_push( $this->problems, ...$compiler->problems );
+		if ( $cache !== null && $this->problems === [] ) {
+			$compiled = $this->write_cache( $cache, $compiled, $included );
+		}
+
+		return $compiled;
+	}
+
+	// Under php -S, Tillkite's own files may be changing, as they do while
+	// someone works on Tillkite. So the route cache's key has their
+	// modification times and sizes too, which costs a stat for each.
+	// dist/tillkite.php is one file, and src/ has one for each class.
+	private function source_times() : string {
+		$files = [ __FILE__ ];
+		if ( ( new \ReflectionClass( Compiler::class ) )->getFileName() !== __FILE__ ) {
+			$files = \glob( __DIR__ . '/*.php' ) ?: [];
+		}
+
+		$times = '';
+		foreach ( $files as $file ) {
+			$times .= "\n" . \filemtime( $file ) . ' ' . \filesize( $file );
+		}
+
+		return $times;
+	}
+
+	// Routes with problems are never cached, so they're reported until
+	// they're fixed. Once written, the cache file is read back, so this
+	// request matches with OPcache's copy of the regexes, as later ones
+	// will (see Compiler::check_copy()). Routes from a file that has only just
+	// changed aren't written yet, so later requests compile them until OPcache
+	// is sure to have the new file (see Cache::stamps()).
+	private function write_cache( Cache $cache, array $compiled, array $included ) : array {
+		$stamps = $cache->stamps( $included, (int) \ini_get( 'opcache.revalidate_freq' ) );
+		if ( $stamps === null ) {
+			return $compiled;
+		}
+
+		$compiled['includes'] = $stamps;
+		$error = $cache->write( $compiled );
+		if ( $error !== '' ) {
+			\error_log( "Tillkite: the route cache can't be written, so the routes are compiled on every request: " . Escape::log( $error ) );
+			return $compiled;
+		}
+
+		$compiled = $cache->read() ?? $compiled;
 		return $compiled;
 	}
 
