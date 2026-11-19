@@ -33,5 +33,6 @@ test( "the repository's scripts don't run for a web request", function( string $
 	expect( $response['body'] )->not->toContain( 'Made a Tillkite site' );
 } )->with( [
 	'bin/dist.php' => [ '/bin/dist.php', [] ],
+	'bench/run.php' => [ '/bench/run.php', [] ],
 	'bin/tillkite' => [ '/?new+made-by-a-request', [ 'bin/tillkite' ] ],
 ] );

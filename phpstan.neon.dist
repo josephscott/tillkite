@@ -5,6 +5,7 @@ parameters:
 		- tests
 		- bin
 		- example
+		- bench
 		- .php-cs-fixer.dist.php
 	excludePaths:
 		# Handlers only run inside App, which gives them $tillkite and $params,

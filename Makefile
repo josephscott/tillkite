@@ -36,7 +36,7 @@ lint: ## Check if the code is valid
 analyze: ## Static analysis, catch problems in code
 	@echo
 	@echo "--> Analyze: phpstan"
-	vendor/bin/phpstan
+	vendor/bin/phpstan --memory-limit=512M
 	@echo
 
 .PHONY: dist
@@ -70,3 +70,10 @@ serve-dist: dist ## Run the example site on dist/tillkite.php at http://localhos
 	# The dist file's classes exist before index.php runs, so the autoloader
 	# never loads src/.
 	GITHUB_WEBHOOK_SECRET=example-secret php -d auto_prepend_file=dist/tillkite.php -S localhost:8418 -t example/public example/public/index.php
+
+.PHONY: bench
+bench: ## Compare Tillkite with FastRoute, Symfony Routing and RadixRouter
+	@echo
+	@echo "--> Bench"
+	php -d opcache.enable_cli=1 bench/run.php
+	@echo
