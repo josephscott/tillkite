@@ -12,6 +12,9 @@ namespace Tillkite;
 final class Cache {
 	private string $file;
 
+	// The routes file's owner, who the cache directory can belong to.
+	private int|false $owner;
+
 	/**
 	 * The cache file's name is a hash of everything the compiled routes, and
 	 * the problems found compiling them, depend on: the routes file's path,
@@ -22,16 +25,18 @@ final class Cache {
 	 * its size, but nothing can set the change time.
 	 *
 	 * The caller has just checked that the routes file exists, so PHP's stat
-	 * cache answers these without another stat.
+	 * cache answers these without another stat. The routes file's owner is
+	 * read from it too, for owner_problem().
 	 */
 	public function __construct( private string $directory, private string $routes, string $settings ) {
 		$key = $routes . "\n" . \filemtime( $routes ) . ' ' . \filectime( $routes ) . ' ' . \filesize( $routes ) . "\n" . $settings . "\n" . \PCRE_VERSION;
 		$this->file = $directory . '/tillkite-' . \hash( 'xxh128', $key ) . '.php';
+		$this->owner = \fileowner( $routes );
 	}
 
 	// Returns the compiled routes, or null when the cache file isn't there
-	// yet, or its directory is open to every user, where the file could be
-	// anyone's PHP, so it isn't run. That check costs a stat on every request.
+	// yet, or its directory is open to every user or belongs to another one,
+	// where the file could be anyone's PHP, so it isn't run. That check costs a stat on every request.
 	// include warns about a missing file, so a temporary handler takes the
 	// warning, and checking for the file first would cost another stat.
 	public function read() : ?array {
@@ -61,8 +66,9 @@ final class Cache {
 	 * The web server runs the cache file, so anyone who can put a file in its
 	 * place can run code as the web server. So it isn't written in a
 	 * directory that every user can write to, even with the sticky bit, which
-	 * still lets them make the file first, and the file is 0644, whatever the
-	 * umask.
+	 * still lets them make the file first, or in one that belongs to another
+	 * user, read() doesn't run a file from one, and the file is 0644, whatever
+	 * the umask.
 	 */
 	public function write( array $compiled ) : string {
 		$error = $this->directory_problem();
@@ -98,14 +104,62 @@ final class Cache {
 	}
 
 	// Why a file in the cache directory could be someone else's PHP, with the
-	// directory's path, or '' when it couldn't: every user can write to the
-	// directory. A directory that isn't there yet has no problem, and writing
-	// to it reports that.
+	// directory's path, or '' when it couldn't. Every user can write to the
+	// directory, or its owner is one that owner_problem() doesn't trust.
+	//
+	// A directory that isn't there yet has no problem, and writing to it
+	// reports that. fileperms() stats the directory, and PHP's stat cache
+	// answers owner_problem().
 	private function directory_problem() : string {
 		$problem = '';
 		$mode = \fileperms( $this->directory );
-		if ( $mode !== false && ( $mode & 0o002 ) !== 0 ) {
+		if ( $mode === false ) {
+			return $problem;
+		}
+
+		if ( ( $mode & 0o002 ) !== 0 ) {
 			$problem = $this->directory . ' is writable by every user, who could put PHP in it for the web server to run, so it is not used. Make it writable only by the web server';
+			return $problem;
+		}
+
+		$problem = $this->owner_problem();
+		if ( $problem !== '' ) {
+			$problem .= ': ' . $this->directory;
+		}
+
+		return $problem;
+	}
+
+	/**
+	 * Why the cache directory's owner could have put PHP in it for the web
+	 * server to run, and what to do about it, without the directory's path,
+	 * or '' when the owner is one to trust: root, the user PHP runs as, or
+	 * the routes file's owner, who can change the site's PHP anyway. Where
+	 * the directory was missing and its parent let them, like one under
+	 * /tmp, another user could have made it first, as 0755, with a file under
+	 * the cache file's name, which anyone who can read the site's files can
+	 * work out.
+	 *
+	 * Without the posix extension there's no telling which user PHP runs as,
+	 * so only root and the routes file's owner pass, and the problem says
+	 * so. On Windows, the owner is always 0. directory_problem() has checked
+	 * that the directory is there.
+	 *
+	 * read() and write() don't use such a directory.
+	 */
+	private function owner_problem() : string {
+		$problem = '';
+		$owner = \fileowner( $this->directory );
+		if ( $owner === 0 || $owner === $this->owner ) {
+			return $problem;
+		}
+
+		$problem = "The cache directory doesn't belong to root or to the routes file's owner, and without PHP's posix extension Tillkite can't tell whether it belongs to the user PHP runs as, or to another user, who could put PHP in it for the web server to run. Load the posix extension, or make the directory's owner the routes file's owner";
+		if ( \function_exists( 'posix_geteuid' ) ) {
+			$problem = '';
+			if ( $owner !== \posix_geteuid() ) {
+				$problem = "The cache directory belongs to another user, who could put PHP in it for the web server to run. Make its owner the user PHP runs as, or the routes file's owner";
+			}
 		}
 
 		return $problem;

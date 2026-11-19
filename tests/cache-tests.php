@@ -45,6 +45,20 @@ it( "doesn't run a cache file in a directory that every user can write to", func
 	expect( $cache->read() )->toBeNull();
 } );
 
+// Only root can give a directory to another user, so this runs where the
+// tests run as root, which make tests, make fpm and make matrix don't.
+it( "doesn't run or write a cache file in a directory that belongs to another user", function() {
+	[ $var, $routes ] = cache_setup();
+	$cache = new Cache( $var, $routes, '' );
+	$cache->write( [] );
+
+	expect( $cache->read() )->toBe( [] );
+	chown( $var, 12345 );
+	clearstatcache();
+	expect( $cache->read() )->toBeNull();
+	expect( $cache->write( [] ) )->toBe( "The cache directory belongs to another user, who could put PHP in it for the web server to run. Make its owner the user PHP runs as, or the routes file's owner: " . $var );
+} )->skip( ! function_exists( 'posix_geteuid' ) || posix_geteuid() !== 0, 'needs root, to give the directory to another user' );
+
 it( 'uses another file when the routes file or a setting changes', function() {
 	[ $var, $routes ] = cache_setup();
 	( new Cache( $var, $routes, 'a' ) )->write( [] );
