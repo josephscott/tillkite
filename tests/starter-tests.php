@@ -66,23 +66,44 @@ test( 'the front controller that new makes sets the production settings before i
 	expect( $run['output'] )->toBe( '["0","1","1","1","Lax","1","1"]' );
 } );
 
+test( 'php tillkite.php new gives a site a copy of itself in lib/, or makes the site around it when it is in lib/ already', function() : void {
+	$dir = temp_dir();
+	mkdir( $dir . '/lib' );
+	copy( dirname( __DIR__ ) . '/dist/tillkite.php', $dir . '/lib/tillkite.php' );
+	$here = run_php( [ 'lib/tillkite.php', 'new' ], $dir );
+	expect( $here['code'] )->toBe( 0 );
+	expect( $here['output'] )->toContain( "in this directory:\n" )->toContain( "\n  lib/tillkite.php\n" );
+	expect( $here['output'] )->not->toContain( 'cd ' );
+	expect( $dir . '/public/index.php' )->toBeFile();
+
+	$made = run_php( [ 'lib/tillkite.php', 'new', 'my-site' ], $dir );
+	expect( $made['code'] )->toBe( 0 );
+	expect( file_get_contents( $dir . '/my-site/lib/tillkite.php' ) )->toBe( file_get_contents( $dir . '/lib/tillkite.php' ) );
+
+	// The site requires its own copy.
+	$hello = http( serve( $dir . '/my-site/public', false )['port'], 'GET', '/hello/Ada' );
+	expect( $hello['body'] )->toContain( '<h1>Hello, Ada</h1>' );
+} );
+
 test( 'new writes nothing when any file it would make is there', function() : void {
 	$dir = temp_dir();
 	mkdir( $dir . '/handlers' );
 	file_put_contents( $dir . '/routes.php', 'mine' );
 	file_put_contents( $dir . '/handlers/home.php', 'mine' );
 	mkdir( $dir . '/mine' );
+	file_put_contents( $dir . '/mine/tillkite.php', 'mine' );
 
-	// A symlink to nothing, which new would write through, and one in place
-	// of a directory, which would send its files somewhere else.
+	// A symlink to nothing, which new would write through, and two in place
+	// of directories, which would send their files somewhere else.
 	symlink( $dir . '/nowhere', $dir . '/init.php' );
 	symlink( $dir . '/mine', $dir . '/var' );
+	symlink( $dir . '/mine', $dir . '/lib' );
 
-	$made = run_php( [ dirname( __DIR__ ) . '/bin/tillkite', 'new', $dir ], $dir );
+	$made = run_php( [ dirname( __DIR__ ) . '/dist/tillkite.php', 'new', $dir ], $dir );
 	expect( $made['code'] )->toBe( 1 );
-	expect( $made['errors'] )->toBe( 'These files are already in ' . $dir . ", so nothing was written:\n\n  init.php\n  routes.php\n  handlers/home.php\n  var\n" );
-	expect( scandir( $dir ) )->toBe( [ '.', '..', 'handlers', 'init.php', 'mine', 'routes.php', 'var' ] );
-	expect( scandir( $dir . '/mine' ) )->toBe( [ '.', '..' ] );
+	expect( $made['errors'] )->toBe( 'These files are already in ' . $dir . ", so nothing was written:\n\n  init.php\n  routes.php\n  handlers/home.php\n  var\n  lib\n  lib/tillkite.php\n" );
+	expect( scandir( $dir ) )->toBe( [ '.', '..', 'handlers', 'init.php', 'lib', 'mine', 'routes.php', 'var' ] );
+	expect( scandir( $dir . '/mine' ) )->toBe( [ '.', '..', 'tillkite.php' ] );
 	expect( scandir( $dir . '/handlers' ) )->toBe( [ '.', '..', 'home.php' ] );
 	expect( file_get_contents( $dir . '/routes.php' ) )->toBe( 'mine' );
 } );

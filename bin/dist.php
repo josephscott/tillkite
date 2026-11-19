@@ -74,6 +74,21 @@ foreach ( $files as $file ) {
 	$dist .= "\n" . substr( $source, strlen( $start ) );
 }
 
+// Run as a command, the file makes a new site. Required, as it is by a site,
+// it does nothing more. Under php-fpm, the check is one comparison.
+$dist .= <<<'PHP'
+
+	// Run as a command, like php tillkite.php new my-site, this file makes a new
+	// site, with a copy of itself. Required, it does nothing more. The CLI
+	// builds $_SERVER before it runs a script, and $GLOBALS reads it without
+	// naming it, which would make php-fpm build it for every request that
+	// loads this file (see App::server()).
+	if ( \PHP_SAPI === 'cli' && \realpath( $GLOBALS['_SERVER']['SCRIPT_FILENAME'] ?? '' ) === __FILE__ ) {
+		exit( Starter::main( $GLOBALS['_SERVER']['argv'], __FILE__, true ) );
+	}
+
+	PHP;
+
 if ( ! is_dir( $root . '/dist' ) && ! mkdir( $root . '/dist' ) ) {
 	fail( 'Could not create dist/.' );
 }

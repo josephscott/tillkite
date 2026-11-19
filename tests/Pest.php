@@ -88,8 +88,10 @@ function site() : array {
 // Starts php -S on a document root, with its index.php as the router, once
 // for each document root. PHP's own output buffer is off, as it is by
 // default, so only Tillkite's buffering decides when headers go out.
-// OPcache is on, as it is in production.
-function serve( string $public ) : array {
+// OPcache is on, as it is in production. With $dist false, it doesn't load
+// dist/tillkite.php first, for a site that requires its own copy, whose
+// classes would be declared twice.
+function serve( string $public, bool $dist = true ) : array {
 	static $servers = [];
 	if ( isset( $servers[$public] ) ) {
 		return $servers[$public];
@@ -99,7 +101,12 @@ function serve( string $public ) : array {
 	$port = free_port();
 
 	$output = [ 'file', $log, 'a' ];
-	$command = [ PHP_BINARY, '-d', 'auto_prepend_file=' . dist_file(), '-d', 'opcache.enable_cli=1', '-d', 'output_buffering=0', '-d', 'display_errors=0', '-d', 'log_errors=1', '-d', 'error_log=' . $log, '-S', '127.0.0.1:' . $port, '-t', $public, $public . '/index.php' ];
+	$prepend = '';
+	if ( $dist ) {
+		$prepend = dist_file();
+	}
+
+	$command = [ PHP_BINARY, '-d', 'auto_prepend_file=' . $prepend, '-d', 'opcache.enable_cli=1', '-d', 'output_buffering=0', '-d', 'display_errors=0', '-d', 'log_errors=1', '-d', 'error_log=' . $log, '-S', '127.0.0.1:' . $port, '-t', $public, $public . '/index.php' ];
 	$process = proc_open( $command, [ [ 'file', '/dev/null', 'r' ], $output, $output ], $pipes );
 	register_shutdown_function( function() use ( $process, $log ) : void {
 		proc_terminate( $process );

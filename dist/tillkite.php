@@ -134,7 +134,7 @@ class App {
 	// A hash of every file in src/, which make dist writes. It's part of the
 	// route cache's key, so code that compiles the routes differently, even
 	// between releases, never reads a cache that older code wrote.
-	private const string SOURCE_HASH = 'd7984df463a00d54b6bdd57a962dff66';
+	private const string SOURCE_HASH = 'c8c3c6ec5c2bf557822d1ed4d97eb4b3';
 
 	// The errors that end a request without an exception, such as running
 	// out of memory or time, or an uncaught exception with no 500 file.
@@ -3817,20 +3817,27 @@ final class Runner {
 }
 
 /**
- * Makes a new site, for `vendor/bin/tillkite new my-site`: init.php, for what
- * the front controller and any scripts share, a front controller, routes,
- * a layout template, two pages, a before-file that sends security headers,
- * and the 404, 405 and 500 pages. It never overwrites a file.
+ * Makes a new site, for `vendor/bin/tillkite new my-site` with Composer, and
+ * `php tillkite.php new my-site` with the dist file: init.php, for what the
+ * front controller and any scripts share, a front controller,
+ * routes, a layout template, two pages, a before-file that sends security
+ * headers, and the 404, 405 and 500 pages. It never overwrites a file.
  *
- * Only the command line uses it, so Composer's autoloader loads it only then.
+ * Only the command line uses it. Composer's autoloader loads it only then,
+ * and in the dist file it's one more class.
  *
  * @internal
  */
 final class Starter {
-	// Runs the command in $argv and returns its exit code. $loader is
-	// Composer's autoloader, which the site's init.php requires.
-	public static function main( array $argv, string $loader ) : int {
+	// Runs the command in $argv and returns its exit code. $loader is the
+	// file that loads Tillkite: Composer's autoloader, which the site's
+	// init.php requires, or with $copy, the dist file, which is copied into
+	// the site as lib/tillkite.php, for its index.php to require.
+	public static function main( array $argv, string $loader, bool $copy ) : int {
 		$command = $argv[0] ?? 'tillkite';
+		if ( $copy ) {
+			$command = 'php ' . $command;
+		}
 
 		$usage = 'Usage: ' . $command . " new [directory]\n\n"
 			. "Makes a Tillkite site in the directory, or the current one: init.php,\n"
@@ -3850,11 +3857,11 @@ final class Starter {
 			return 1;
 		}
 
-		$code = self::make_site( $args[1] ?? '.', $loader );
+		$code = self::make_site( $args[1] ?? '.', $loader, $copy );
 		return $code;
 	}
 
-	private static function make_site( string $dir, string $loader ) : int {
+	private static function make_site( string $dir, string $loader, bool $copy ) : int {
 		$files = self::files();
 		$conflicts = [];
 		$dirs = [];
@@ -3870,10 +3877,20 @@ final class Starter {
 		// somewhere else, so it's in the way, like a file. A symlink in place
 		// of a file, even to nothing, would have new write through it.
 		unset( $dirs['.'] );
+		if ( $copy ) {
+			$dirs['lib'] = true;
+		}
+
 		foreach ( \array_keys( $dirs ) as $path ) {
 			if ( \is_link( $dir . '/' . $path ) ) {
 				$conflicts[] = $path;
 			}
+		}
+
+		// A dist file that's already the site's lib/tillkite.php needs no copy.
+		$tillkite = $dir . '/lib/tillkite.php';
+		if ( $copy && ( \file_exists( $tillkite ) || \is_link( $tillkite ) ) && \realpath( $tillkite ) !== \realpath( $loader ) ) {
+			$conflicts[] = 'lib/tillkite.php';
 		}
 
 		if ( $conflicts !== [] ) {
@@ -3894,7 +3911,7 @@ final class Starter {
 		// anyone who could change a handler, or put a file in var/, could run
 		// code as the web server.
 		$umask = \umask( \umask() | 0o002 );
-		$root = self::write( $dir, $files, $loader );
+		$root = self::write( $dir, $files, $loader, $copy );
 		\umask( $umask );
 		\restore_error_handler();
 		if ( $root === '' ) {
@@ -3902,7 +3919,7 @@ final class Starter {
 			return 1;
 		}
 
-		echo self::next_steps( $dir, $root, \array_keys( $files ) );
+		echo self::next_steps( $dir, $root, \array_keys( $files ), $copy );
 		return 0;
 	}
 
@@ -3910,7 +3927,7 @@ final class Starter {
 	// path, or '' if a file couldn't be written. The site's init.php
 	// requires Composer's autoloader by its path from the site's directory,
 	// so the site still works when it moves along with vendor/.
-	private static function write( string $dir, array $files, string $loader ) : string {
+	private static function write( string $dir, array $files, string $loader, bool $copy ) : string {
 		$root = '';
 		if ( \is_dir( $dir ) || \mkdir( $dir, 0o777, true ) ) {
 			$root = (string) \realpath( $dir );
@@ -3921,11 +3938,28 @@ final class Starter {
 			return '';
 		}
 
-		$autoload = "\n// Composer's autoloader, which loads Tillkite for public/index.php, and\n// the packages that scripts use.\nrequire " . self::relative( $root, $from ) . ";\n\n";
+		// With the dist file, only the web needs Tillkite, so index.php requires
+		// its copy. With Composer, init.php requires the autoloader, since
+		// scripts need the other packages too.
+		$autoload = "//\n";
+		$load = "\n// Tillkite, which only the web needs.\nrequire __DIR__ . '/../lib/tillkite.php';\n";
+		if ( ! $copy ) {
+			$autoload = "\n// Composer's autoloader, which loads Tillkite for public/index.php, and\n// the packages that scripts use.\nrequire " . self::relative( $root, $from ) . ";\n\n";
+			$load = '';
+		}
+
 		$files['init.php'] = \str_replace( "{autoload}\n", $autoload, $files['init.php'] );
+		$files['public/index.php'] = \str_replace( '{tillkite}', $load, $files['public/index.php'] );
 		foreach ( $files as $path => $contents ) {
 			$parent = \dirname( $root . '/' . $path );
 			if ( ! ( \is_dir( $parent ) || \mkdir( $parent, 0o777, true ) ) || ! self::create( $root . '/' . $path, $contents ) ) {
+				return '';
+			}
+		}
+
+		$tillkite = $root . '/lib/tillkite.php';
+		if ( $copy && \realpath( $tillkite ) !== $from ) {
+			if ( ! ( \is_dir( $root . '/lib' ) || \mkdir( $root . '/lib' ) ) || ! self::create( $tillkite, (string) \file_get_contents( $from ) ) ) {
 				return '';
 			}
 		}
@@ -3969,7 +4003,11 @@ final class Starter {
 		return $php;
 	}
 
-	private static function next_steps( string $dir, string $root, array $paths ) : string {
+	private static function next_steps( string $dir, string $root, array $paths, bool $copy ) : string {
+		if ( $copy ) {
+			$paths[] = 'lib/tillkite.php';
+		}
+
 		// cd takes a name that starts with - as an option, quoted or not, so
 		// it gets ./ in front.
 		$where = $dir;
@@ -4025,8 +4063,8 @@ final class Starter {
 		return $steps;
 	}
 
-	// The site's files, by their paths in it. {autoload} in init.php is
-	// replaced with what loads Tillkite.
+	// The site's files, by their paths in it. {autoload} in init.php and
+	// {tillkite} in index.php are replaced with what loads Tillkite.
 	private static function files() : array {
 		$files = [
 			'init.php' => <<<'TEMPLATE'
@@ -4077,7 +4115,7 @@ final class Starter {
 
 				// What the site's scripts share too, like $db.
 				require __DIR__ . '/../init.php';
-
+				{tillkite}
 				$tillkite = new Tillkite\App( [
 					'routes' => __DIR__ . '/../routes.php',
 					'handlers' => __DIR__ . '/../handlers',
@@ -4352,4 +4390,13 @@ final class Timer {
 
 		return $steps;
 	}
+}
+
+// Run as a command, like php tillkite.php new my-site, this file makes a new
+// site, with a copy of itself. Required, it does nothing more. The CLI
+// builds $_SERVER before it runs a script, and $GLOBALS reads it without
+// naming it, which would make php-fpm build it for every request that
+// loads this file (see App::server()).
+if ( \PHP_SAPI === 'cli' && \realpath( $GLOBALS['_SERVER']['SCRIPT_FILENAME'] ?? '' ) === __FILE__ ) {
+	exit( Starter::main( $GLOBALS['_SERVER']['argv'], __FILE__, true ) );
 }
