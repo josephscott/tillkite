@@ -189,8 +189,13 @@ class App {
 	// Runs the before-file and the handler.
 	private function run_route( string $before, string $handler, array $params ) : void {
 		$this->start( $this->buffer, $params );
+		$next = $this->next_file( ... );
+		if ( $before !== '' ) {
+			$next = $this->next_after_before( ... );
+		}
+
 		$this->in_route_files = true;
-		Runner::files( $this, $params, $before, $handler, $this->next_file( ... ) );
+		Runner::files( $this, $params, $before, $handler, $next );
 		$this->in_route_files = false;
 		if ( $this->error_code !== null ) {
 			$this->show_error( $this->error_code );
@@ -202,14 +207,15 @@ class App {
 
 	// Runs a miss's before-file, with no handler after it. It's always
 	// buffered, because what it prints is thrown away before the response.
-	// Returns true when it ran through. When it returned false, what it
-	// printed is sent instead, and when it called error(), its page is.
+	// Returns true when it ran through. When it returned false or set a
+	// redirect or error status, what it printed is sent instead, and when it
+	// called error(), its page is.
 	private function run_miss_before( string $before ) : bool {
 		$this->start( true, [] );
 		$ran = false;
 		$this->in_route_files = true;
 		Runner::files( $this, [], $before, '', function() use ( &$ran ) : bool {
-			$ran = true;
+			$ran = \http_response_code() < 300;
 			return false;
 		} );
 		$this->in_route_files = false;
@@ -301,6 +307,17 @@ class App {
 	// a file has called error(), so no file after that one runs.
 	private function next_file() : bool {
 		$next = $this->error_code === null;
+		return $next;
+	}
+
+	// Runner calls it in next_file()'s place after a before-file. A
+	// before-file that redirects or sets an error status has answered the
+	// request, even if it doesn't return false, like a login check with only
+	// header( 'Location: /sign-in' ), which sets a 302. Going on would send
+	// the page to the visitor it turned away. A status under 300 goes on, like
+	// a Location with a 201.
+	private function next_after_before() : bool {
+		$next = \http_response_code() < 300 && $this->next_file();
 		return $next;
 	}
 

@@ -111,6 +111,17 @@ describe( 'routing', function() {
 		expect( $response['body'] )->toBe( 'denied' );
 	} )->with( [ 'a route' => [ '/scope' ], 'a miss' => [ '/nowhere' ] ] );
 
+	it( "stops at a before-file that redirects or sets an error status, even when it doesn't return false", function( string $target, string $before, int $status, string $body, ?string $location ) {
+		$response = request( 'GET', $target, [ 'before' => $before ] );
+
+		expect( [ $response['status'], $response['body'], $response['headers']['location'] ?? null ] )->toBe( [ $status, $body, $location ] );
+	} )->with( [
+		'a redirect, before the handler' => [ '/', 'redirect-before.php', 302, 'signing in', '/sign-in' ],
+		'an error status' => [ '/', 'forbid-before.php', 403, 'forbidden', null ],
+		'a redirect, in place of a 404' => [ '/nope', 'redirect-before.php', 302, 'signing in', '/sign-in' ],
+		'a status under 300' => [ '/', 'created-before.php', 201, 'text', '/new' ],
+	] );
+
 	it( 'buffers output, so a header can come after it, unless buffering is off', function() {
 		expect( request( 'GET', '/late-header' )['headers'] )->toHaveKey( 'x-late' );
 		expect( request( 'GET', '/late-header', [ 'buffer' => false ] )['headers'] )->not->toHaveKey( 'x-late' );
