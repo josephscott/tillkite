@@ -29,7 +29,7 @@ $tillkite = new Tillkite\App( [
 	'templates' => __DIR__ . '/../templates',
 	'cache' => __DIR__ . '/../var',
 	'before' => 'before.php',
-	'errors' => [ 404 => 'errors/404.php', 405 => 'errors/405.php', 500 => 'errors/500.php' ],
+	'errors' => [ 403 => 'errors/403.php', 404 => 'errors/404.php', 405 => 'errors/405.php', 500 => 'errors/500.php' ],
 	// Only in development, because timings that every visitor can see can
 	// give away information, like a login check that's slower for an
 	// account that exists.

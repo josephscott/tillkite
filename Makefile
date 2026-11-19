@@ -60,7 +60,8 @@ tests: dist ## Pest tests, against src/ and then dist/tillkite.php
 serve: ## Run the example site at http://localhost:8417
 	@echo
 	@echo "--> Serve: the example site at http://localhost:8417"
-	php -S localhost:8417 -t example/public example/public/index.php
+	# The secret that hooks/github.php checks signatures with.
+	GITHUB_WEBHOOK_SECRET=example-secret php -S localhost:8417 -t example/public example/public/index.php
 
 .PHONY: serve-dist
 serve-dist: dist ## Run the example site on dist/tillkite.php at http://localhost:8418
@@ -68,4 +69,4 @@ serve-dist: dist ## Run the example site on dist/tillkite.php at http://localhos
 	@echo "--> Serve: the example site on dist/tillkite.php at http://localhost:8418"
 	# The dist file's classes exist before index.php runs, so the autoloader
 	# never loads src/.
-	php -d auto_prepend_file=dist/tillkite.php -S localhost:8418 -t example/public example/public/index.php
+	GITHUB_WEBHOOK_SECRET=example-secret php -d auto_prepend_file=dist/tillkite.php -S localhost:8418 -t example/public example/public/index.php

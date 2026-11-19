@@ -96,6 +96,9 @@ function example() : array {
 		$cleared = true;
 	}
 
+	// The secret that hooks/github.php checks signatures with, which php -S
+	// gets from this process's environment.
+	putenv( 'GITHUB_WEBHOOK_SECRET=example-secret' );
 	$example = serve( dirname( __DIR__ ) . '/example/public' );
 	return $example;
 }
