@@ -21,3 +21,4 @@ All notable changes to Tillkite are recorded here. The format follows [Keep a Ch
 - A cache directory that doesn't exist, that PHP can't write to, or that belongs to a user Tillkite doesn't trust is a problem with the site's setup. Outside `php -S`, the response says what's wrong without any paths, which go to the error log, and the 500 file doesn't run.
 - The `base` option mounts the app under a URL prefix, like `/app`. It's removed from the path before matching, a path outside it gets a 404, and redirects keep it.
 - Under `php -S`, `run()` returns `false` for a file in the document root, so `php -S` serves it, unless it's a PHP file, which is routed like any other path, so the front controller is the only PHP a request runs.
+- A handlers or cache directory inside the document root, where a request could get or run its files directly, is a problem with the site's setup.

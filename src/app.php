@@ -528,6 +528,49 @@ class App {
 		return $static;
 	}
 
+	// A file inside the document root can be asked for by its own path. A web
+	// server that runs the PHP files it finds there, as php -S and most
+	// Apache hosts do, then runs a handler without its before-files, like a
+	// login check, and one that doesn't sends the handler's source. Either
+	// sends whatever else is in the cache directory, like a database. So
+	// each of these directories has to be outside it, and one that isn't is
+	// a problem with the site's setup, which the 500 page describes. See
+	// report_problems(). realpath() resolves symlinks first, like a release's.
+	//
+	// It's checked only when the routes are compiled, which a site with a
+	// cache does once, since routes with problems are never cached. The
+	// command line has no document root.
+	//
+	// The document root comes from $_SERVER when something has built it, as
+	// run() has under php -S, or from getenv(), and never from
+	// filter_input(), server()'s last resort, which builds $_SERVER. A web
+	// server that passes no DOCUMENT_ROOT would have PHP build it here, and
+	// OPcache build it again each time it loads a file it compiled after
+	// that, on every request. Nothing is checked there.
+	private function check_document_root() : void {
+		$root = $GLOBALS['_SERVER']['DOCUMENT_ROOT'] ?? \getenv( 'DOCUMENT_ROOT' );
+		if ( ! \is_string( $root ) || $root === '' ) {
+			return;
+		}
+
+		$root = \realpath( $root );
+		if ( $root === false ) {
+			return;
+		}
+
+		$inside = \rtrim( $root, '/\\' ) . \DIRECTORY_SEPARATOR;
+		foreach ( [ 'handlers', 'cache' ] as $name ) {
+			$path = false;
+			if ( $this->$name !== '' ) {
+				$path = \realpath( $this->$name );
+			}
+
+			if ( $path !== false && \str_starts_with( $path . \DIRECTORY_SEPARATOR, $inside ) ) {
+				$this->setup_problem( 'The ' . $name . ' directory is inside the document root, where a request can get or run its files directly, without the before-files. Move it outside the document root, and point the ' . $name . ' option at it', $path . ' is inside ' . $root );
+			}
+		}
+	}
+
 	// Reads the compiled routes from the cache, or loads the routes file and
 	// compiles it. Every problem found goes into $problems.
 	private function compile() : array {
@@ -586,6 +629,8 @@ class App {
 				$this->setup_problem( $problem, $this->cache );
 			}
 		}
+
+		$this->check_document_root();
 
 		// With a cache, the files that the routes file loads are noted, so a
 		// change to one is noticed. Runner has to be loaded first, to not be one.
