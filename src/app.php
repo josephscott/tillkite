@@ -134,6 +134,9 @@ class App {
 	// The code that a before-file or handler passed to error().
 	private ?int $error_code = null;
 
+	// Set when run() starts.
+	private ?Timer $timer = null;
+
 	// The output buffer level from before Tillkite's own buffer, or null when
 	// the files that are running aren't buffered.
 	private ?int $level = null;
@@ -173,6 +176,8 @@ class App {
 	 * that php -S should serve itself.
 	 */
 	public function run() : bool {
+		$this->timer = new Timer();
+
 		// PHP's messages hold file paths, and can hold passwords, and its default
 		// is to print them. So only php -S, for the developer, and the command
 		// line keep them. A host that locks the setting, or disables ini_set(),
@@ -201,6 +206,7 @@ class App {
 
 		\register_shutdown_function( $this->shutdown( ... ) );
 		$this->respond( $compiled, $this->method(), $path, $query );
+		$this->finish_timing();
 		return true;
 	}
 
@@ -269,6 +275,7 @@ class App {
 		$this->start( $this->buffer, $params );
 		$next = $this->next_file( ... );
 		if ( $before !== '' ) {
+			$this->timer->next( 'before' );
 			$next = $this->next_after_before( ... );
 		}
 
@@ -290,6 +297,7 @@ class App {
 	// called error(), its page is.
 	private function run_miss_before( string $before ) : bool {
 		$this->start( true, [] );
+		$this->timer->next( 'before' );
 		$ran = false;
 		$this->in_route_files = true;
 		Runner::files( $this, [], $before, '', function() use ( &$ran ) : bool {
@@ -349,7 +357,7 @@ class App {
 
 		\http_response_code( $code );
 		$this->start( $this->buffer, $params );
-		Runner::files( $this, $params, '', $this->handlers . '/' . $file, $this->next_file( ... ) );
+		Runner::files( $this, $params, '', $this->handlers . '/' . $file, fn () : bool => $this->next_file( 'error' ) );
 		$this->finish();
 	}
 
@@ -382,9 +390,14 @@ class App {
 	}
 
 	// Runner calls it before the handler or error file. It returns false once
-	// a file has called error(), so no file after that one runs.
-	private function next_file() : bool {
+	// a file has called error(), so no file after that one runs. Otherwise, it
+	// starts that step's timing.
+	private function next_file( string $step ) : bool {
 		$next = $this->error_code === null;
+		if ( $next ) {
+			$this->timer->next( $step );
+		}
+
 		return $next;
 	}
 
@@ -394,8 +407,8 @@ class App {
 	// header( 'Location: /sign-in' ), which sets a 302. Going on would send
 	// the page to the visitor it turned away. A status under 300 goes on, like
 	// a Location with a 201.
-	private function next_after_before() : bool {
-		$next = \http_response_code() < 300 && $this->next_file();
+	private function next_after_before( string $step ) : bool {
+		$next = \http_response_code() < 300 && $this->next_file( $step );
 		return $next;
 	}
 
@@ -427,6 +440,7 @@ class App {
 			\http_response_code( 500 );
 		}
 
+		$this->timer->next( 'error' );
 		Runner::error_file( $this, $this->params, $error, $this->handlers . '/' . $this->errors[500] );
 	}
 
@@ -443,10 +457,11 @@ class App {
 		$this->plain( 500 );
 	}
 
-	// Sends what's buffered. A file may have ended Tillkite's buffer itself,
-	// or left buffers of its own, so this ends whatever is above the level
-	// from before Tillkite's.
+	// Ends the timing, and sends what's buffered. A file may have ended
+	// Tillkite's buffer itself, or left buffers of its own, so this ends
+	// whatever is above the level from before Tillkite's.
 	private function finish() : void {
+		$this->finish_timing();
 		if ( $this->level === null ) {
 			return;
 		}
@@ -499,6 +514,17 @@ class App {
 		return $route;
 	}
 
+	// Returns the milliseconds for each step that ran. A step that's still
+	// running reports its time so far.
+	public function timings() : array {
+		$timings = [];
+		if ( $this->timer !== null ) {
+			$timings = $this->timer->timings();
+		}
+
+		return $timings;
+	}
+
 	// Returns the request's URI as the web server sent it, with its query
 	// string and before base is taken off, like '/blog?page=2'. It's
 	// $_SERVER['REQUEST_URI'], read without building $_SERVER, which takes
@@ -525,7 +551,7 @@ class App {
 	 * and $data, the array passed here. A template can call template() too,
 	 * for a layout or a part of a page. It works anywhere, even before
 	 * run(). A template that doesn't exist is a fatal error, as require
-	 * makes it.
+	 * makes it. While run() is timing the request, timings() has its time.
 	 *
 	 * The name is a .php file in the templates directory, or a directory in
 	 * it, like 'posts/card.php'. Any other name, like one with a .. segment
@@ -551,6 +577,16 @@ class App {
 			$dir = \dirname( $this->routes );
 		}
 
+		// While run() is timing the request, the template's own time is a step
+		// named after it, like template:layout.php, which takes that time out
+		// of the step that ran the template. A template that runs another
+		// gets the time back when that one returns.
+		$timer = $this->timer;
+		$previous = '';
+		if ( $timer !== null && $timer->running() ) {
+			$previous = $timer->next( 'template:' . $template );
+		}
+
 		// If the template throws, what it printed is thrown away, with any
 		// buffers it left, and the exception goes on to the caller. Nothing
 		// is caught. Buffers it left when it returns are its output too.
@@ -569,6 +605,10 @@ class App {
 		} finally {
 			while ( \ob_get_level() > $level ) {
 				\ob_end_clean();
+			}
+
+			if ( $timer !== null && $previous !== '' ) {
+				$timer->next( $previous );
 			}
 		}
 
@@ -965,15 +1005,23 @@ class App {
 		echo $text;
 	}
 
-	// Runs at the end of every request that's routed. A fatal error ends the
-	// request without reaching the 500 file. What's still buffered is replaced
-	// with one line of text. When PHP displays errors, which takes php -S, a
-	// host that keeps run() from turning them off, or a file that turns them
-	// back on, its message is in that output, so the output stays and only
-	// the status changes. Running out of memory, PHP throws the buffers away
-	// itself, and with display_errors on, it has sent its message, and a 200,
-	// before this runs.
+	// Ends the timing, once the response is finished.
+	private function finish_timing() : void {
+		$this->timer->stop();
+	}
+
+	// Runs at the end of every request that's routed. When a file called
+	// exit, or a fatal error ended the request, it ends the timing.
+	//
+	// A fatal error ends the request without reaching the 500 file. What's
+	// still buffered is replaced with one line of text. When PHP displays
+	// errors, which takes php -S, a host that keeps run() from turning them
+	// off, or a file that turns them back on, its message is in that output,
+	// so the output stays and only the status changes. Running out of memory,
+	// PHP throws the buffers away itself, and with display_errors on, it has
+	// sent its message, and a 200, before this runs.
 	private function shutdown() : void {
+		$this->finish_timing();
 		$error = \error_get_last();
 		if ( $error === null || ( $error['type'] & self::FATAL_ERRORS ) === 0 || \headers_sent() ) {
 			return;

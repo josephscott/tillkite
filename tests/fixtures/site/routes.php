@@ -8,6 +8,8 @@ return [
 	[ 'GET', '/scope', 'scope.php' ],
 	[ '*', '/anything', 'method.php' ],
 	[ 'GET', '/route/{name}', 'route.php' ],
+	[ 'GET', '/timings', 'timings.php' ],
+	[ 'GET', '/templates', 'templates.php' ],
 	[ 'GET', '/late-header', 'late-header.php' ],
 	[ 'GET', '/ends-buffer', 'ends-buffer.php' ],
 	[ 'GET', '/error/{code}', 'error.php' ],

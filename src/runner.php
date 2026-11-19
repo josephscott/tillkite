@@ -28,16 +28,16 @@ final class Runner {
 	// here too, as a handler with no before-file, and so does the before-file
 	// when no route matches, with no handler.
 	//
-	// The last argument is App's next_file(), which runs before the handler.
-	// It returns false once a file has called error(), and then the handler
-	// doesn't run. When no route matches, it returns false in the handler's
+	// The last argument is App's next_file(), which runs before the handler,
+	// with 'handler'. It returns false once a file has called error(), and
+	// then the handler doesn't run. When no route matches, it returns false in the handler's
 	// place.
 	public static function files( App $tillkite, array $params ) : void {
 		if ( \func_get_arg( 2 ) !== '' && ( require \func_get_arg( 2 ) ) === false ) {
 			return;
 		}
 
-		if ( \func_get_arg( 4 )() ) {
+		if ( \func_get_arg( 4 )( 'handler' ) ) {
 			require \func_get_arg( 3 );
 		}
 	}

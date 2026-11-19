@@ -388,3 +388,18 @@ describe( 'php -S', function() {
 		'a null byte' => [ '/style.css%00' ],
 	] );
 } );
+
+describe( 'timing', function() {
+	it( 'returns the time of each step so far from timings()', function() {
+		$timings = json_decode( request( 'GET', '/timings', [ 'before' => 'before.php' ] )['body'], true );
+
+		expect( array_keys( $timings ) )->toBe( [ 'total', 'route', 'before', 'handler' ] );
+		expect( min( $timings ) )->toBeGreaterThanOrEqual( 0 );
+	} );
+
+	it( 'times each template as a step of its own, until the response is finished', function() {
+		$response = request( 'GET', '/templates', [ 'templates' => __DIR__ . '/fixtures/templates' ] );
+
+		expect( $response['body'] )->toBe( '<main>Hello, Ada</main> ["total","route","handler","template:layout.php","template:open-buffer.php"]' );
+	} );
+} );
