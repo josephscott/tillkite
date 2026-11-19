@@ -9,6 +9,7 @@
 /Makefile export-ignore
 /bench export-ignore
 /bin/dist.php export-ignore
+/docker export-ignore
 /example export-ignore
 /phpstan.neon.dist export-ignore
 /phpunit.xml.dist export-ignore

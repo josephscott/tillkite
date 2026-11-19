@@ -77,3 +77,25 @@ bench: ## Compare Tillkite with FastRoute, Symfony Routing and RadixRouter
 	@echo "--> Bench"
 	php -d opcache.enable_cli=1 bench/run.php
 	@echo
+
+# ### #
+##@ Docker: nothing to install but Docker
+
+# The PHP version that make fpm runs, like: make fpm PHP=8.4
+PHP ?= 8.5
+
+# Builds the image for one PHP version, tagged tillkite-dev:VERSION. After the
+# first build, Docker's cache makes it quick.
+docker_image = docker build -q --build-arg PHP_VERSION=$(1) -t tillkite-dev:$(1) docker > /dev/null
+
+# Runs a command in that image, in a copy of the repository, with vendor/ in
+# a volume for each PHP version. See docker/run.sh.
+docker_run = docker run --rm -v "$(CURDIR)":/src:ro -v tillkite-vendor-$(1):/work/vendor $(2) tillkite-dev:$(1) /src/docker/run.sh
+
+.PHONY: fpm
+fpm: ## Tests under nginx and php-fpm, in Docker, against src/ and dist/tillkite.php. PHP=8.4 picks the PHP version
+	@echo
+	@echo "--> FPM: tests under nginx and php-fpm, in Docker, on PHP $(PHP)"
+	$(call docker_image,$(PHP))
+	$(call docker_run,$(PHP),-e TILLKITE_FPM=1) sh -c 'php bin/dist.php > /dev/null && vendor/bin/pest tests/fpm-tests.php && TILLKITE_DIST=1 vendor/bin/pest tests/fpm-tests.php'
+	@echo

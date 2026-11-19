@@ -12,6 +12,7 @@ parameters:
 		# and templates inside template(), which gives them $tillkite and $data.
 		- tests/fixtures/site/handlers
 		- tests/fixtures/templates
+		- tests/fixtures/fpm/handlers
 		- example/handlers
 		- example/templates
 		# The example site's route cache.

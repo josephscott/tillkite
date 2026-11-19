@@ -19,7 +19,8 @@ if ( dist_file() !== '' ) {
 	require dist_file();
 }
 
-// A compiler whose handlers directory is tests/fixtures/handlers.
+// A compiler whose handlers directory is tests/fixtures/handlers, which has
+// page.php, before.php, 404.php, 405.php and 500.php.
 function make_compiler( array $settings = [] ) : Tillkite\Compiler {
 	$compiler = new Tillkite\Compiler();
 	$compiler->handlers = __DIR__ . '/fixtures/handlers';
@@ -30,6 +31,7 @@ function make_compiler( array $settings = [] ) : Tillkite\Compiler {
 	return $compiler;
 }
 
+// Compiles routes that are expected to have no problems.
 function compile_routes( array $routes, array $settings = [] ) : array {
 	$compiler = make_compiler( $settings );
 	$compiled = $compiler->compile( $routes );
@@ -47,34 +49,6 @@ function route_problems( array $routes, array $settings = [] ) : array {
 function make_matcher( array $routes, array $settings = [] ) : Tillkite\Matcher {
 	$matcher = new Tillkite\Matcher( compile_routes( $routes, $settings ) );
 	return $matcher;
-}
-
-// A new directory, removed when the tests end.
-function temp_dir() : string {
-	$dir = sys_get_temp_dir() . '/tillkite-test-' . uniqid();
-	mkdir( $dir );
-	register_shutdown_function( remove_dir( ... ), $dir );
-	return $dir;
-}
-
-function remove_dir( string $dir ) : void {
-	foreach ( array_diff( (array) scandir( $dir ), [ '.', '..' ] ) as $name ) {
-		$path = $dir . '/' . $name;
-		if ( is_dir( $path ) && ! is_link( $path ) ) {
-			remove_dir( $path );
-		} else {
-			unlink( $path );
-		}
-	}
-
-	rmdir( $dir );
-}
-
-// Writes a routes file with one route, to text.php, and sets its
-// modification time.
-function write_routes( string $file, string $path, int $mtime ) : void {
-	file_put_contents( $file, "<?php return [ [ 'GET', '" . $path . "', 'text.php' ] ];\n" );
-	touch( $file, $mtime );
 }
 
 // Starts php -S on tests/fixtures/site the first time it's called, and stops
@@ -147,6 +121,157 @@ function free_port() : int {
 	return $port;
 }
 
+// Starts nginx and php-fpm on tests/fixtures/fpm the first time it's
+// called, with the nginx configuration the README gives and OPcache on, and
+// stops them when the tests end. Returns nginx's port. With TILLKITE_DIST=1,
+// php-fpm loads dist/tillkite.php first. The php-fpm tests run only with
+// TILLKITE_FPM=1, which make fpm sets in Docker, where both
+// are installed, and need nginx and php-fpm on the PATH. With $starter, the
+// port is another server's, for a site that new makes, whose init.php fails
+// for a request with an X-Fail header, and which fpm_site() gives the path of.
+function fpm( bool $starter = false ) : int {
+	static $port = 0;
+	static $starter_port = 0;
+	if ( $port !== 0 ) {
+		$requested = $port;
+		if ( $starter ) {
+			$requested = $starter_port;
+		}
+
+		return $requested;
+	}
+
+	$dir = temp_dir();
+	$site = fpm_site( $dir . '/site' );
+	shell_exec( escapeshellarg( PHP_BINARY ) . ' ' . escapeshellarg( dirname( __DIR__ ) . '/bin/tillkite' ) . ' new ' . escapeshellarg( $site ) );
+	file_put_contents( $site . '/init.php', "if ( getenv( 'HTTP_X_FAIL' ) !== false ) {\n\tthrow new RuntimeException( 'the password is hunter2' );\n}\n", FILE_APPEND );
+	$starter_port = free_port();
+	$public = __DIR__ . '/fixtures/fpm/public';
+	$fpm_port = free_port();
+	$port = free_port();
+	preg_match( '/--conf-path=(\S+)/', (string) shell_exec( 'nginx -V 2>&1' ), $conf );
+	$fastcgi = dirname( $conf[1] ?? '/etc/nginx/nginx.conf' ) . '/fastcgi.conf';
+	file_put_contents( $dir . '/php-fpm.conf', <<<CONF
+		[global]
+		pid = {$dir}/php-fpm.pid
+		error_log = {$dir}/php-fpm.log
+		daemonize = no
+
+		[tests]
+		listen = 127.0.0.1:{$fpm_port}
+		pm = static
+		pm.max_children = 1
+		php_admin_value[error_log] = {$dir}/php-errors.log
+		php_admin_flag[log_errors] = on
+		php_value[display_errors] = on
+		php_admin_value[opcache.revalidate_freq] = 0
+
+		CONF );
+	file_put_contents( $dir . '/nginx.conf', <<<CONF
+		worker_processes 1;
+		pid {$dir}/nginx.pid;
+		error_log {$dir}/nginx-error.log;
+		events {
+		}
+		http {
+			access_log off;
+			client_body_temp_path {$dir}/nginx-client;
+			proxy_temp_path {$dir}/nginx-proxy;
+			fastcgi_temp_path {$dir}/nginx-fastcgi;
+			uwsgi_temp_path {$dir}/nginx-uwsgi;
+			scgi_temp_path {$dir}/nginx-scgi;
+			server {
+				listen 127.0.0.1:{$port};
+				root {$public};
+
+				location / {
+					try_files \$uri /index.php\$is_args\$args;
+				}
+
+				location ~* \.php\$ {
+					rewrite ^ /index.php last;
+				}
+
+				location = /index.php {
+					include {$fastcgi};
+					fastcgi_pass 127.0.0.1:{$fpm_port};
+				}
+
+				# Without fastcgi.conf, so PHP gets no DOCUMENT_ROOT.
+				location = /no-document-root {
+					fastcgi_param SCRIPT_FILENAME {$public}/index.php;
+					fastcgi_param REQUEST_METHOD \$request_method;
+					fastcgi_param REQUEST_URI \$request_uri;
+					fastcgi_pass 127.0.0.1:{$fpm_port};
+				}
+			}
+			server {
+				listen 127.0.0.1:{$starter_port};
+				root {$site}/public;
+
+				location / {
+					try_files \$uri /index.php\$is_args\$args;
+				}
+
+				location ~* \.php\$ {
+					rewrite ^ /index.php last;
+				}
+
+				location = /index.php {
+					include {$fastcgi};
+					fastcgi_pass 127.0.0.1:{$fpm_port};
+				}
+			}
+		}
+
+		CONF );
+
+	$output = [ 'file', $dir . '/servers.log', 'a' ];
+	$servers = [
+		proc_open( [ 'php-fpm', '-F', '-y', $dir . '/php-fpm.conf', '-d', 'opcache.enable=1', '-d', 'auto_prepend_file=' . dist_file() ], [ [ 'file', '/dev/null', 'r' ], $output, $output ], $pipes ),
+		proc_open( [ 'nginx', '-p', $dir, '-c', $dir . '/nginx.conf', '-e', $dir . '/nginx-error.log', '-g', 'daemon off;' ], [ [ 'file', '/dev/null', 'r' ], $output, $output ], $pipes ),
+	];
+	register_shutdown_function( function() use ( $servers ) : void {
+		foreach ( $servers as $server ) {
+			proc_terminate( $server );
+			proc_close( $server );
+		}
+	} );
+
+	// Waits up to five seconds for a page from php-fpm through nginx.
+	$ready = false;
+	for ( $i = 0; $i < 500 && ! $ready; $i++ ) {
+		usleep( 10_000 );
+		set_error_handler( static fn () : bool => true );
+		$socket = stream_socket_client( 'tcp://127.0.0.1:' . $port, $errno, $error, 0.1 );
+		restore_error_handler();
+		if ( $socket !== false ) {
+			fclose( $socket );
+			$ready = http( $port, 'GET', '/users/1' )['status'] === 200;
+		}
+	}
+
+	expect( $ready )->toBeTrue( "nginx and php-fpm didn't start:\n" . file_get_contents( $dir . '/servers.log' ) );
+	$requested = $port;
+	if ( $starter ) {
+		$requested = $starter_port;
+	}
+
+	return $requested;
+}
+
+// The path of the site that new makes, for fpm( true ), once $set has said.
+function fpm_site( string $set = '' ) : string {
+	static $site = '';
+	if ( $set !== '' ) {
+		$site = $set;
+	}
+
+	return $site;
+}
+
+// Sends a request to the test site. $options become App's options, and $set
+// is set on it as properties.
 function request( string $method, string $target, array $options = [], array $set = [] ) : array {
 	$headers = [];
 	if ( $options !== [] ) {
@@ -184,6 +309,35 @@ function http( int $port, string $method, string $target, array $headers = [], s
 
 	$result = [ 'status' => (int) explode( ' ', $lines[0] )[1], 'headers' => $headers, 'body' => $body ];
 	return $result;
+}
+
+// Makes an empty directory, which is removed with everything in it when the
+// tests end.
+function temp_dir() : string {
+	$dir = sys_get_temp_dir() . '/tillkite-test-' . uniqid();
+	mkdir( $dir );
+	register_shutdown_function( remove_dir( ... ), $dir );
+	return $dir;
+}
+
+function remove_dir( string $dir ) : void {
+	foreach ( array_diff( (array) scandir( $dir ), [ '.', '..' ] ) as $name ) {
+		$path = $dir . '/' . $name;
+		if ( is_dir( $path ) && ! is_link( $path ) ) {
+			remove_dir( $path );
+		} else {
+			unlink( $path );
+		}
+	}
+
+	rmdir( $dir );
+}
+
+// Writes a routes file with one route, to text.php, and sets its
+// modification time.
+function write_routes( string $file, string $path, int $mtime ) : void {
+	file_put_contents( $file, "<?php return [ [ 'GET', '" . $path . "', 'text.php' ] ];\n" );
+	touch( $file, $mtime );
 }
 
 // What error_log() wrote while $run ran.
