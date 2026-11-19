@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "example",
+      "runtimeExecutable": "make",
+      "runtimeArgs": ["serve"],
+      "port": 8417
+    },
+    {
+      "name": "example-dist",
+      "runtimeExecutable": "make",
+      "runtimeArgs": ["serve-dist"],
+      "port": 8418
+    }
+  ]
+}

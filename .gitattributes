@@ -3,6 +3,7 @@
 
 # Left out of what Composer installs and of GitHub's archives, which is what a
 # site needs and no more, so nothing here can be run from a site's vendor/.
+/.claude export-ignore
 /.gitattributes export-ignore
 /.github export-ignore
 /.gitignore export-ignore
