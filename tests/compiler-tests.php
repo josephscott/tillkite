@@ -54,6 +54,31 @@ describe( 'compiled tables', function() {
 		expect( array_keys( $compiled['static']['GET'] ) )->toBe( [ '/blog', '/blog/archive', '/blog/archive/all' ] );
 	} );
 
+	it( 'gives each dynamic route a regex, keyed by its number of matches', function() {
+		$compiled = compile_routes( [
+			[ 'GET', '/users/{id:\d+}', 'page.php' ],
+			[ 'GET', '/users/{name}/posts', 'page.php' ],
+			[ 'GET', '/{a}-{b}', 'page.php' ],
+			[ 'GET', '/docs/{path:.+}', 'page.php' ],
+			[ 'GET', '/café/{id}', 'page.php' ],
+		] );
+
+		$match = fn ( int $route, array $params ) => [ count( $params ) + 1 => [ 'status' => 200, 'route' => $route, 'params' => $params ] ];
+		expect( $compiled['dynamic']['GET'] )->toBe( [
+			'{^/users/(\d+)$}sD' => $match( 0, [ 'id' ] ),
+			'{^/users/([^/]++)/posts$}sD' => $match( 1, [ 'name' ] ),
+			'{^/([^/]+)\-([^/]++)$}sD' => $match( 2, [ 'a', 'b' ] ),
+			'{^/docs/(.+)(?<!/)$}sD' => $match( 3, [ 'path' ] ),
+			'{^/caf%C3%A9/([^/]++)$}sD' => $match( 4, [ 'id' ] ),
+		] );
+	} );
+
+	it( 'lets a last parameter that can match a / end with one when trailing_slash is true', function() {
+		$compiled = compile_routes( [ [ 'GET', '/docs/{path:.+}/', 'page.php' ] ], [ 'trailing_slash' => true ] );
+
+		expect( array_keys( $compiled['dynamic']['GET'] ) )->toBe( [ '{^/docs/(.+)/$}sD' ] );
+	} );
+
 	it( 'stores a non-ASCII literal by its percent-encoded form', function() {
 		$compiled = compile_routes( [ [ 'GET', '/café', 'page.php' ] ] );
 

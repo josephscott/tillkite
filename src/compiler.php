@@ -16,6 +16,12 @@ final class Compiler {
 
 	public const string DEFAULT_REGEX = '[^/]+';
 
+	// Custom parameter regexes that can't match a /: word characters, \d, \w,
+	// \. and \-, classes of those (ranges between letters and digits never
+	// include /), negated classes that list /, quantifiers, | and (?:...).
+	// Anything else is treated as able to match a /.
+	private const string SEGMENT_ONLY = '{^(?:[A-Za-z0-9_|*+?,]|\\\\[dw.-]|\{\d+(?:,\d*)?\}|\(\?:|\)|\[(?:[A-Za-z0-9_]-[A-Za-z0-9_]|[A-Za-z0-9_.]|\\\\[dw.-]|-(?=\]))+\]|\[\^[^\]\\\\]*/[^\]\\\\]*\])+$}D';
+
 	public bool $trailing_slash = false;
 
 	public array $methods = [];
@@ -48,6 +54,9 @@ final class Compiler {
 	 *
 	 * - routes:  each route as written
 	 * - static:  method => [ path => the match: [ 'status' => 200, ... ] ]
+	 * - dynamic: method => [ regex => [ key => the match, with the parameter
+	 *            names where their values go ] ], where the key is the
+	 *            regex's number of matches
 	 *
 	 * A route for '*' is added to every method's table, and also gets a '*'
 	 * table for methods that have no routes of their own.
@@ -63,6 +72,7 @@ final class Compiler {
 		$compiled = [
 			'routes' => [],
 			'static' => [],
+			'dynamic' => [],
 		];
 
 		$allowed = $this->check_settings();
@@ -83,20 +93,27 @@ final class Compiler {
 
 		foreach ( $this->table_keys( $parsed, $allowed ) as $table ) {
 			$static = [];
+			$dynamic = [];
 			foreach ( $parsed as $index => $entry ) {
 				if ( ! $this->applies( $entry['methods'], $table ) ) {
 					continue;
 				}
 
-				// Only a variant without parameters has a path of its own.
 				foreach ( $entry['variants'] as $variant ) {
-					if ( $variant['names'] === [] ) {
+					if ( $variant['regex'] === '' ) {
 						$static[$variant['path']] ??= $index;
+						continue;
 					}
+
+					// Each value is a match, so the key is one more than the
+					// number of parameters.
+					$regex = '{^' . $variant['regex'] . '$}sD';
+					$dynamic[$regex] ??= [ \count( $variant['names'] ) + 1 => [ 'status' => 200, 'route' => $index, 'params' => $variant['names'] ] ];
 				}
 			}
 
 			$compiled['static'][$table] = $static;
+			$compiled['dynamic'][$table] = $dynamic;
 		}
 
 		\ksort( $this->entry_problems );
@@ -472,8 +489,9 @@ final class Compiler {
 		return $variants;
 	}
 
-	// Returns [ 'source', 'path', 'names' ]: the variant as written, its path
-	// as a request sends it, and its parameter names.
+	// Returns [ 'source', 'path', 'regex', 'pieces', 'names' ]. A static
+	// variant has a path and an empty regex. A dynamic one has a regex, the
+	// same regex split into pieces, and its parameter names.
 	private function compile_variant( array $tokens ) : array {
 		$source = '';
 		$path = '';
@@ -492,9 +510,91 @@ final class Compiler {
 		$variant = [
 			'source' => $source,
 			'path' => $path,
+			'regex' => '',
+			'pieces' => [],
 			'names' => $names,
 		];
+
+		if ( $names === [] ) {
+			return $variant;
+		}
+
+		$pieces = $this->pieces( $tokens );
+		$variant['path'] = '';
+		$variant['regex'] = \implode( '', \array_column( $pieces, 'regex' ) );
+		$variant['pieces'] = $pieces;
 		return $variant;
+	}
+
+	// Splits a dynamic variant's regex at each / in its literals, so routes
+	// that start the same way can share their first pieces. Each piece is:
+	//
+	// - regex:   its part of the regex
+	// - text:    the literal text it starts with
+	// - literal: true when it has no parameters
+	// - fixed:   true when none of its parameters can match a /, so it
+	//            matches exactly one path segment
+	private function pieces( array $tokens ) : array {
+		$pieces = [];
+		$piece = null;
+		$last = \count( $tokens ) - 1;
+		foreach ( $tokens as $i => $token ) {
+			if ( $token['type'] === 'param' ) {
+				$piece['regex'] .= $this->param_regex( $token, $tokens[$i + 1] ?? null, $i === $last );
+				$piece['literal'] = false;
+				$piece['fixed'] = $piece['fixed'] && $this->segment_only( $token['regex'] );
+				continue;
+			}
+
+			// A pattern starts with a literal /, so the first chunk is empty
+			// before the first piece exists.
+			foreach ( \explode( '/', $this->encode( $token['text'] ) ) as $n => $chunk ) {
+				if ( $n > 0 ) {
+					if ( $piece !== null ) {
+						$pieces[] = $piece;
+					}
+
+					$piece = [ 'regex' => '/', 'text' => '/', 'literal' => true, 'fixed' => true ];
+				}
+
+				if ( $piece === null ) {
+					continue;
+				}
+
+				$piece['regex'] .= \preg_quote( $chunk );
+				if ( $piece['literal'] ) {
+					$piece['text'] .= $chunk;
+				}
+			}
+		}
+
+		$pieces[] = $piece;
+		return $pieces;
+	}
+
+	// The default [^/]+ is possessive when a / or the end comes next, so PCRE
+	// never backtracks into it. When URLs never end in /, a last parameter
+	// whose regex allows / (like a catch-all) must not match one at the end.
+	private function param_regex( array $token, ?array $next, bool $is_last ) : string {
+		$regex = '(' . $token['regex'] . ')';
+		$closes = $next === null || ( $next['type'] === 'literal' && \str_starts_with( $next['text'], '/' ) );
+		if ( $token['regex'] === self::DEFAULT_REGEX && $closes ) {
+			$regex = '([^/]++)';
+		}
+
+		if ( $is_last && ! $this->trailing_slash && ! $this->segment_only( $token['regex'] ) ) {
+			$regex .= '(?<!/)';
+		}
+
+		return $regex;
+	}
+
+	private function segment_only( string $regex ) : bool {
+		if ( $regex === self::DEFAULT_REGEX || \preg_match( self::SEGMENT_ONLY, $regex ) === 1 ) {
+			return true;
+		}
+
+		return false;
 	}
 
 	// Returns a problem message when the variant doesn't follow trailing_slash.
