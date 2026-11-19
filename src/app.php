@@ -175,7 +175,7 @@ class App {
 
 		if ( $result['status'] === 500 ) {
 			\error_log( 'Tillkite: matching the request failed: ' . $result['error'] );
-			$this->plain( 500 );
+			$this->server_error( 'Matching the request failed: ' . $result['error'] );
 			return;
 		}
 
@@ -296,7 +296,7 @@ class App {
 
 		$this->discard_output();
 		if ( $problem !== '' ) {
-			$this->plain( 500 );
+			$this->server_error( $problem );
 			return;
 		}
 
@@ -321,7 +321,8 @@ class App {
 		return $next;
 	}
 
-	// Starts the buffer, if there is one.
+	// Starts the buffer, if there is one, and sends exceptions that the files
+	// don't catch to the 500 file, if there is one.
 	private function start( bool $buffer, array $params ) : void {
 		$this->params = $params;
 		$this->level = null;
@@ -329,6 +330,39 @@ class App {
 			$this->level = \ob_get_level();
 			\ob_start();
 		}
+
+		if ( isset( $this->errors[500] ) ) {
+			\set_exception_handler( $this->run_500( ... ) );
+		}
+	}
+
+	// Runs the 500 file, as the handler for exceptions that the files don't
+	// catch, or from server_error(). Output that's still buffered is thrown
+	// away. Output that's already been sent stays, so the error is logged and
+	// the 500 file's output is added.
+	private function run_500( \Throwable $error ) : void {
+		$this->in_route_files = false;
+		$this->discard_output();
+		if ( \headers_sent() ) {
+			\error_log( 'Tillkite: uncaught ' . Escape::log( (string) $error ) );
+		} else {
+			\http_response_code( 500 );
+		}
+
+		Runner::error_file( $this, $this->params, $error, $this->handlers . '/' . $this->errors[500] );
+	}
+
+	// A 500 that isn't an uncaught exception: the 500 file gets an exception
+	// that describes it, which Tillkite creates but never throws. With a
+	// broken configuration, the 500 file runs only if it's there to run.
+	private function server_error( string $message ) : void {
+		$file = $this->errors[500] ?? null;
+		if ( \is_string( $file ) && $file !== '' && $this->is_absolute( $this->handlers ) && \is_file( $this->handlers . '/' . $file ) ) {
+			$this->run_500( new \RuntimeException( $message ) );
+			return;
+		}
+
+		$this->plain( 500 );
 	}
 
 	// Sends what's buffered. A file may have ended Tillkite's buffer itself,
@@ -455,8 +489,8 @@ class App {
 	}
 
 	// Under php -S, the response lists the problems, for the developer.
-	// Anywhere else, they go to the error log, and the response is a plain
-	// 500, without them.
+	// Anywhere else, they go to the error log, and the response is the 500
+	// file's page, or a plain 500, without them.
 	private function report_problems() : void {
 		$message = "Tillkite found problems with its configuration:\n\n- " . \implode( "\n- ", $this->problems ) . "\n";
 		if ( \PHP_SAPI === 'cli-server' ) {
@@ -468,7 +502,7 @@ class App {
 			\error_log( 'Tillkite: ' . Escape::log( $problem ) );
 		}
 
-		$this->plain( 500 );
+		$this->server_error( $message );
 	}
 
 	// A plain-text response: $text, or the code and its reason.

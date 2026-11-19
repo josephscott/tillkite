@@ -4,7 +4,7 @@ declare( strict_types = 1 );
 namespace Tillkite;
 
 /**
- * Runs the routes file, before-files and handlers, each in a function scope of its own.
+ * Runs the routes file, before-files, handlers and error files, each in a function scope of its own.
  *
  * The files run inside these static methods, so there's no $this, and their
  * class scope is this class, which has nothing private to reach. App's
@@ -39,5 +39,11 @@ final class Runner {
 		if ( \func_get_arg( 4 )() ) {
 			require \func_get_arg( 3 );
 		}
+	}
+
+	// Runs the 500 file, with the $params of the files that were running, and
+	// the $error that stopped them.
+	public static function error_file( App $tillkite, array $params, \Throwable $error ) : void {
+		require \func_get_arg( 3 );
 	}
 }

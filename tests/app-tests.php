@@ -37,18 +37,26 @@ describe( 'configuration problems', function() {
 	// Outside php -S, the request runs as a plain PHP script, the way
 	// php-fpm would run it. A problem with a newline can't add a line of its
 	// own to the log.
-	it( 'logs the problems outside php -S, and sends a plain 500', function() {
-		$environment = [ 'REQUEST_URI' => '/', 'REQUEST_METHOD' => 'GET', 'HTTP_X_OPTIONS' => json_encode( [ 'trailing_slash' => 1, 'routes' => "/no\nwhere" ] ) ];
+	it( 'logs the problems outside php -S, and runs the 500 file or sends a plain 500', function( array $options, string $output, string $logged ) {
+		$environment = [ 'REQUEST_URI' => '/', 'REQUEST_METHOD' => 'GET', 'HTTP_X_OPTIONS' => json_encode( $options + [ 'trailing_slash' => 1 ] ) ];
 		$command = [ PHP_BINARY, '-d', 'display_errors=0', '-d', 'error_log=/dev/stderr', SITE . '/public/index.php' ];
 		$process = proc_open( $command, [ [ 'file', '/dev/null', 'r' ], [ 'pipe', 'w' ], [ 'pipe', 'w' ] ], $pipes, null, $environment );
 		$response = stream_get_contents( $pipes[1] );
 		$log = stream_get_contents( $pipes[2] );
 		proc_close( $process );
 
-		expect( $response )->toBe( "500 Internal Server Error\n" );
+		expect( $response )->toBe( $output );
 		expect( $log )->toContain( 'Tillkite: The trailing_slash option must be a bool, not int' );
-		expect( $log )->toContain( "Tillkite: The routes file doesn't exist: /no\\nwhere\n" );
-	} );
+		expect( $log )->toContain( $logged );
+	} )->with( [
+		'no 500 file' => [ [ 'routes' => "/no\nwhere" ], "500 Internal Server Error\n", "Tillkite: The routes file doesn't exist: /no\\nwhere\n" ],
+		'a 500 file' => [
+			[ 'errors' => [ 500 => '500.php' ] ],
+			"the 500 page: Tillkite found problems with its configuration:\n\n- The trailing_slash option must be a bool, not int\n"
+				. ' [["tillkite","params","error"],[]]',
+			'',
+		],
+	] );
 } );
 
 describe( 'routing', function() {
@@ -162,10 +170,11 @@ describe( 'error()', function() {
 	] );
 
 	it( "sends a 500 for a code it doesn't take, and logs it", function() {
-		$response = request( 'GET', '/error/405' );
+		$response = request( 'GET', '/error/405', [ 'errors' => [ 500 => '500.php' ] ] );
+		$message = 'error() takes a 4xx code other than 405, like 404 or 403, not 405';
 
-		expect( [ $response['status'], $response['body'] ] )->toBe( [ 500, "500 Internal Server Error\n" ] );
-		expect( file_get_contents( site()['log'] ) )->toContain( 'Tillkite: error() takes a 4xx code other than 405, like 404 or 403, not 405' );
+		expect( [ $response['status'], $response['body'] ] )->toBe( [ 500, 'the 500 page: ' . $message . ' [["tillkite","params","error"],{"code":"405"}]' ] );
+		expect( file_get_contents( site()['log'] ) )->toContain( 'Tillkite: ' . $message );
 	} );
 
 	it( 'does nothing in an error file, and logs it', function() {
@@ -180,5 +189,38 @@ describe( 'error()', function() {
 
 		expect( [ $response['status'], $response['body'] ] )->toBe( [ 200, 'partial after' ] );
 		expect( file_get_contents( site()['log'] ) )->toContain( 'Tillkite: error( 404 ) came after the output had started, so nothing was added to it' );
+	} );
+} );
+
+describe( 'the 500 file', function() {
+	it( 'runs for an uncaught exception, and throws away the buffered output', function() {
+		$response = request( 'GET', '/throws/7', [ 'errors' => [ 500 => '500.php' ] ] );
+
+		expect( $response['status'] )->toBe( 500 );
+		expect( $response['body'] )->toBe( 'the 500 page: boom [["tillkite","params","error"],{"id":"7"}]' );
+	} );
+
+	it( 'adds its output to output already sent, and logs the error', function() {
+		$response = request( 'GET', '/throws/7', [ 'buffer' => false, 'errors' => [ 500 => '500.php' ] ] );
+
+		expect( $response['body'] )->toStartWith( 'partialthe 500 page: boom' );
+		expect( file_get_contents( site()['log'] ) )->toContain( 'Tillkite: uncaught RuntimeException: boom' );
+	} );
+
+	it( 'runs when matching the request fails, which is also logged', function() {
+		$path = '/backtrack/' . str_repeat( 'a', 60 ) . '!';
+		$with_file = request( 'GET', $path, [ 'errors' => [ 500 => '500.php' ] ] );
+		$without_file = request( 'GET', $path );
+
+		expect( [ $with_file['status'], $with_file['body'] ] )
+			->toBe( [ 500, 'the 500 page: Matching the request failed: Backtrack limit exhausted [["tillkite","params","error"],[]]' ] );
+		expect( [ $without_file['status'], $without_file['body'] ] )->toBe( [ 500, "500 Internal Server Error\n" ] );
+		expect( file_get_contents( site()['log'] ) )->toContain( 'Tillkite: matching the request failed: Backtrack limit exhausted' );
+	} );
+
+	it( 'runs for an exception in the 404 file', function() {
+		$response = request( 'GET', '/nope', [ 'errors' => [ 404 => 'throws.php', 500 => '500.php' ] ] );
+
+		expect( [ $response['status'], $response['body'] ] )->toBe( [ 500, 'the 500 page: boom [["tillkite","params","error"],[]]' ] );
 	} );
 } );
