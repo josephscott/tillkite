@@ -20,6 +20,10 @@ class App {
 	// false: URLs never end in /. true: they always do.
 	public bool $trailing_slash = false;
 
+	// Buffers the output of the files that run, so they can send headers
+	// after it.
+	public bool $buffer = true;
+
 	// The file that runs before every handler.
 	public string $before = '';
 
@@ -35,6 +39,7 @@ class App {
 		'routes' => 'string',
 		'handlers' => 'string',
 		'trailing_slash' => 'bool',
+		'buffer' => 'bool',
 		'before' => 'string',
 		'errors' => 'array',
 		'methods' => 'array',
@@ -76,6 +81,10 @@ class App {
 	];
 
 	private array $problems = [];
+
+	// The output buffer level from before Tillkite's own buffer, or null when
+	// the files that are running aren't buffered.
+	private ?int $level = null;
 
 	// Sets the option with each key's name. An unknown key, or a value of the
 	// wrong type, is a problem that run() reports.
@@ -150,7 +159,9 @@ class App {
 		$matcher = new Matcher( $compiled );
 		$result = $matcher->match( $method, $path );
 		if ( $result['status'] === 200 ) {
+			$this->start( $this->buffer );
 			Runner::files( $this, $result['params'], $before, $this->handlers . '/' . $compiled['routes'][$result['route']][2] );
+			$this->finish();
 			return;
 		}
 
@@ -160,9 +171,27 @@ class App {
 			return;
 		}
 
-		if ( Runner::files( $this, [], $before, '' ) ) {
-			$this->miss( $result, $query );
+		if ( $before !== '' && ! $this->run_miss_before( $before ) ) {
+			return;
 		}
+
+		$this->miss( $result, $query );
+	}
+
+	// Runs a miss's before-file, with no handler after it. It's always
+	// buffered, because what it prints is thrown away before the response.
+	// Returns true when it ran through. When it returned false, what it
+	// printed is sent instead.
+	private function run_miss_before( string $before ) : bool {
+		$this->start( true );
+		$ran = Runner::files( $this, [], $before, '' );
+		if ( ! $ran ) {
+			$this->finish();
+			return $ran;
+		}
+
+		$this->discard_output();
+		return $ran;
 	}
 
 	// The response when no route matches: a 308 redirect, or the 404 or 405
@@ -201,7 +230,42 @@ class App {
 		}
 
 		\http_response_code( $code );
+		$this->start( $this->buffer );
 		Runner::files( $this, [], '', $this->handlers . '/' . $file );
+		$this->finish();
+	}
+
+	// Starts the buffer, if there is one.
+	private function start( bool $buffer ) : void {
+		$this->level = null;
+		if ( $buffer ) {
+			$this->level = \ob_get_level();
+			\ob_start();
+		}
+	}
+
+	// Sends what's buffered. A file may have ended Tillkite's buffer itself,
+	// or left buffers of its own, so this ends whatever is above the level
+	// from before Tillkite's.
+	private function finish() : void {
+		if ( $this->level === null ) {
+			return;
+		}
+
+		while ( \ob_get_level() > $this->level ) {
+			\ob_end_flush();
+		}
+	}
+
+	// Throws away what's buffered, ending Tillkite's buffer and any above it.
+	private function discard_output() : void {
+		if ( $this->level === null ) {
+			return;
+		}
+
+		while ( \ob_get_level() > $this->level ) {
+			\ob_end_clean();
+		}
 	}
 
 	// Returns the request's value for a name in $_SERVER, like REQUEST_URI,

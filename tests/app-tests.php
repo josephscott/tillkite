@@ -110,4 +110,18 @@ describe( 'routing', function() {
 		expect( $response['status'] )->toBe( 401 );
 		expect( $response['body'] )->toBe( 'denied' );
 	} )->with( [ 'a route' => [ '/scope' ], 'a miss' => [ '/nowhere' ] ] );
+
+	it( 'buffers output, so a header can come after it, unless buffering is off', function() {
+		expect( request( 'GET', '/late-header' )['headers'] )->toHaveKey( 'x-late' );
+		expect( request( 'GET', '/late-header', [ 'buffer' => false ] )['headers'] )->not->toHaveKey( 'x-late' );
+	} );
+
+	it( 'copes with a handler that ends the buffer itself', function() {
+		expect( request( 'GET', '/ends-buffer' )['body'] )->toBe( 'ab' );
+	} );
+
+	it( "throws away a miss's before-file output, and keeps a route's", function() {
+		expect( request( 'GET', '/nope', [ 'before' => 'prints-before.php' ] )['body'] )->toBe( "404 Not Found\n" );
+		expect( request( 'GET', '/', [ 'before' => 'prints-before.php' ] )['body'] )->toBe( 'before text' );
+	} );
 } );
