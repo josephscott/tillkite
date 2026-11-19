@@ -34,6 +34,8 @@ final class Compiler {
 
 	public ?string $before = null;
 
+	public array $errors = [];
+
 	public array $problems = [];
 
 	// Every route: [ 'route' => as written, 'label' => like '3', 'name' => its
@@ -235,6 +237,10 @@ final class Compiler {
 			$this->problems[] = "The before file doesn't exist: " . $this->path( $this->before );
 		}
 
+		foreach ( $this->error_problems( $this->errors ) as $problem ) {
+			$this->problems[] = \ucfirst( $problem );
+		}
+
 		$allowed = self::STANDARD_METHODS;
 		foreach ( $this->methods as $method ) {
 			if ( ! \is_string( $method ) || \preg_match( '/^[A-Z][A-Z0-9_-]*$/D', $method ) !== 1 ) {
@@ -248,6 +254,22 @@ final class Compiler {
 		}
 
 		return $allowed;
+	}
+
+	// Checks the error files.
+	private function error_problems( array $errors ) : array {
+		$problems = [];
+		foreach ( $errors as $code => $file ) {
+			if ( ! isset( App::REASONS[$code] ) ) {
+				$problems[] = 'unknown error code in errors: ' . $code . '. Use 500, or a standard 4xx code like 404 or 403';
+			} elseif ( ! \is_string( $file ) || $file === '' ) {
+				$problems[] = 'the ' . $code . ' error file must be a file name';
+			} elseif ( ! $this->file_exists( $file ) ) {
+				$problems[] = 'the ' . $code . " error file doesn't exist: " . $this->path( $file );
+			}
+		}
+
+		return $problems;
 	}
 
 	private function list_routes( array $routes ) : void {

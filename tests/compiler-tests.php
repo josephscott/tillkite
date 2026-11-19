@@ -376,12 +376,19 @@ describe( 'problems', function() {
 	} )->with( [
 		'missing handlers directory' => [ [ 'handlers' => '/no/such/dir' ], "The handlers directory doesn't exist: /no/such/dir" ],
 		'missing before file' => [ [ 'before' => 'missing.php' ], "The before file doesn't exist: " . __DIR__ . '/fixtures/handlers/missing.php' ],
+		'unknown error code' => [ [ 'errors' => [ 418 => '404.php' ] ], 'Unknown error code in errors: 418. Use 500, or a standard 4xx code like 404 or 403' ],
+		'error file not a string' => [ [ 'errors' => [ 404 => true ] ], 'The 404 error file must be a file name' ],
+		'missing error file' => [ [ 'errors' => [ 500 => 'missing.php' ] ], "The 500 error file doesn't exist: " . __DIR__ . '/fixtures/handlers/missing.php' ],
 		'lowercase custom method' => [ [ 'methods' => [ 'purge' ] ], "Custom methods must be uppercase, like PURGE: 'purge'" ],
 		'custom method with a newline' => [ [ 'methods' => [ "PURGE\n" ] ], "Custom methods must be uppercase, like PURGE: 'PURGE\n'" ],
 		'custom method not a string' => [ [ 'methods' => [ [ 'PURGE', 1 ] ] ], "Custom methods must be uppercase, like PURGE: [ 'PURGE', 1 ]" ],
 	] );
 
 	it( 'accepts valid settings', function() {
-		compile_routes( [], [ 'before' => 'before.php', 'methods' => [ 'PURGE', 'GET' ] ] );
+		compile_routes( [], [
+			'before' => 'before.php',
+			'errors' => [ 403 => '404.php', 404 => '404.php', 405 => '405.php', 500 => '500.php' ],
+			'methods' => [ 'PURGE', 'GET' ],
+		] );
 	} );
 } );
