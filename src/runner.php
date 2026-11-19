@@ -4,7 +4,7 @@ declare( strict_types = 1 );
 namespace Tillkite;
 
 /**
- * Runs the routes file, each in a function scope of its own.
+ * Runs the routes file and handlers, each in a function scope of its own.
  *
  * The files run inside these static methods, so there's no $this, and their
  * class scope is this class, which has nothing private to reach. App's
@@ -19,5 +19,10 @@ final class Runner {
 	public static function routes() : mixed {
 		$routes = require \func_get_arg( 0 );
 		return $routes;
+	}
+
+	// Runs a handler, with $tillkite and the route's $params.
+	public static function handler( App $tillkite, array $params ) : void {
+		require \func_get_arg( 2 );
 	}
 }

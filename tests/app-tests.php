@@ -50,3 +50,21 @@ describe( 'configuration problems', function() {
 		expect( $log )->toContain( "Tillkite: The routes file doesn't exist: /no\\nwhere\n" );
 	} );
 } );
+
+describe( 'routing', function() {
+	it( 'runs the handler with the decoded parameters', function() {
+		expect( request( 'GET', '/users/5' )['body'] )->toBe( '{"id":"5"}' );
+		expect( request( 'GET', '/files/a%2Fb/c%20d?x=1' )['body'] )->toBe( '{"path":"a\\/b\\/c d"}' );
+	} );
+
+	it( 'runs the handler in a scope with only $tillkite and $params, and no access to App internals', function() {
+		expect( request( 'GET', '/scope' )['body'] )->toBe( '{"vars":["tillkite","params"],"private":false}' );
+	} );
+
+	it( 'sends a plain 404 when nothing matches', function() {
+		$response = request( 'GET', '/nowhere' );
+
+		expect( $response['status'] )->toBe( 404 );
+		expect( $response['body'] )->toBe( "404 Not Found\n" );
+	} );
+} );

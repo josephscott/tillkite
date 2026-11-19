@@ -119,12 +119,64 @@ class App {
 			\ini_set( 'display_errors', '0' );
 		}
 
-		$this->compile();
+		$compiled = $this->compile();
 		if ( $this->problems !== [] ) {
 			$this->report_problems();
+			return true;
 		}
 
+		$path = self::server( 'REQUEST_URI' ) ?? '/';
+		$mark = \strpos( $path, '?' );
+		if ( $mark !== false ) {
+			$path = \substr( $path, 0, $mark );
+		}
+
+		$this->respond( $compiled, self::server( 'REQUEST_METHOD' ) ?? 'GET', $path );
 		return true;
+	}
+
+	// Matches the request and runs the route's handler. When matching fails,
+	// the response is a 500, and anything else that doesn't match is a 404.
+	private function respond( array $compiled, string $method, string $path ) : void {
+		$matcher = new Matcher( $compiled );
+		$result = $matcher->match( $method, $path );
+		if ( $result['status'] === 200 ) {
+			Runner::handler( $this, $result['params'], $this->handlers . '/' . $compiled['routes'][$result['route']][2] );
+			return;
+		}
+
+		if ( $result['status'] === 500 ) {
+			\error_log( 'Tillkite: matching the request failed: ' . $result['error'] );
+			$this->plain( 500 );
+			return;
+		}
+
+		$this->plain( 404 );
+	}
+
+	// Returns the request's value for a name in $_SERVER, like REQUEST_URI,
+	// or null.
+	//
+	// PHP builds $_SERVER, from everything the web server sent, when it loads
+	// a file that names it, which takes about 3 µs a request under php-fpm,
+	// and OPcache builds it when it loads a file that it compiled while
+	// $_SERVER existed. So Tillkite's code never names it, and a site whose
+	// files don't either never pays for it. Once something has built it, the
+	// site may have changed it, so it's read then. Until then, php-fpm's
+	// getenv() has the same values, from the request. php -S has none, and
+	// its filter_input() returns null, but it builds $_SERVER.
+	private static function server( string $name ) : ?string {
+		if ( isset( $GLOBALS['_SERVER'] ) ) {
+			$value = $GLOBALS['_SERVER'][$name] ?? null;
+			return $value;
+		}
+
+		$value = \getenv( $name );
+		if ( $value === false ) {
+			$value = \filter_input( \INPUT_SERVER, $name ) ?? $GLOBALS['_SERVER'][$name] ?? null;
+		}
+
+		return $value;
 	}
 
 	// Loads the routes file and compiles it. Every problem found goes into
