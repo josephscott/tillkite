@@ -260,6 +260,89 @@ function fpm( bool $starter = false ) : int {
 	return $requested;
 }
 
+// Starts Apache with mod_php, once, on the php-fpm tests' site, whose
+// public/.htaccess sends every request to index.php, and returns its port. It
+// runs as the user the tests run as, with a configuration of its own, and
+// one process, so the requests share one PHP, as the php-fpm tests' do.
+// make apache runs these in Docker.
+function apache() : int {
+	static $port = 0;
+	if ( $port !== 0 ) {
+		return $port;
+	}
+
+	$dir = temp_dir();
+	$public = __DIR__ . '/fixtures/fpm/public';
+	$modules = '/usr/lib/apache2/modules';
+	$port = free_port();
+	// Apache turns away an empty value.
+	$prepend = '';
+	if ( dist_file() !== '' ) {
+		$prepend = 'php_admin_value auto_prepend_file ' . dist_file();
+	}
+
+	file_put_contents( $dir . '/httpd.conf', <<<CONF
+		ServerName localhost
+		Listen 127.0.0.1:{$port}
+		PidFile {$dir}/httpd.pid
+		DefaultRuntimeDir {$dir}
+		ErrorLog {$dir}/apache-error.log
+		LoadModule mpm_prefork_module {$modules}/mod_mpm_prefork.so
+		LoadModule authz_core_module {$modules}/mod_authz_core.so
+		LoadModule dir_module {$modules}/mod_dir.so
+		LoadModule rewrite_module {$modules}/mod_rewrite.so
+		LoadModule php_module {$modules}/libphp.so
+		StartServers 1
+		MinSpareServers 1
+		MaxSpareServers 1
+		MaxRequestWorkers 1
+		DocumentRoot {$public}
+		DirectoryIndex index.php
+		<Directory {$public}>
+			AllowOverride All
+			Require all granted
+		</Directory>
+		<FilesMatch \.php$>
+			SetHandler application/x-httpd-php
+		</FilesMatch>
+		php_admin_value error_log {$dir}/php-errors.log
+		php_admin_flag log_errors on
+		php_value display_errors on
+		{$prepend}
+
+		CONF );
+
+	// Apache stops by signalling its whole process group, so it gets one of
+	// its own, or it would stop the tests too.
+	$output = [ 'file', $dir . '/server.log', 'a' ];
+	$server = proc_open( [ 'setsid', 'apache2', '-f', $dir . '/httpd.conf', '-DFOREGROUND' ], [ [ 'file', '/dev/null', 'r' ], $output, $output ], $pipes );
+	register_shutdown_function( function() use ( $server ) : void {
+		proc_terminate( $server );
+		proc_close( $server );
+	} );
+
+	// Waits up to five seconds for a page from Apache.
+	$ready = false;
+	for ( $i = 0; $i < 500 && ! $ready; $i++ ) {
+		usleep( 10_000 );
+		set_error_handler( static fn () : bool => true );
+		$socket = stream_socket_client( 'tcp://127.0.0.1:' . $port, $errno, $error, 0.1 );
+		restore_error_handler();
+		if ( $socket !== false ) {
+			fclose( $socket );
+			$ready = http( $port, 'GET', '/users/1' )['status'] === 200;
+		}
+	}
+
+	$errors = '';
+	if ( is_file( $dir . '/apache-error.log' ) ) {
+		$errors = (string) file_get_contents( $dir . '/apache-error.log' );
+	}
+
+	expect( $ready )->toBeTrue( "Apache didn't start:\n" . file_get_contents( $dir . '/server.log' ) . $errors );
+	return $port;
+}
+
 // The path of the site that new makes, for fpm( true ), once $set has said.
 function fpm_site( string $set = '' ) : string {
 	static $site = '';

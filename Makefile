@@ -81,7 +81,7 @@ bench: ## Compare Tillkite with FastRoute, Symfony Routing and RadixRouter
 # ### #
 ##@ Docker: nothing to install but Docker
 
-# The PHP version that make fpm runs, like: make fpm PHP=8.4
+# The PHP version that make fpm and make apache run, like: make fpm PHP=8.4
 PHP ?= 8.5
 
 # Builds the image for one PHP version, tagged tillkite-dev:VERSION. After the
@@ -92,10 +92,22 @@ docker_image = docker build -q --build-arg PHP_VERSION=$(1) -t tillkite-dev:$(1)
 # a volume for each PHP version. See docker/run.sh.
 docker_run = docker run --rm -v "$(CURDIR)":/src:ro -v tillkite-vendor-$(1):/work/vendor $(2) tillkite-dev:$(1) /src/docker/run.sh
 
+# The same for the image with Apache and mod_php, tagged tillkite-apache:VERSION.
+docker_apache_image = docker build -q --target apache --build-arg PHP_VERSION=$(1) -t tillkite-apache:$(1) docker > /dev/null
+docker_apache_run = docker run --rm -v "$(CURDIR)":/src:ro -v tillkite-vendor-$(1):/work/vendor $(2) tillkite-apache:$(1) /src/docker/run.sh
+
 .PHONY: fpm
 fpm: ## Tests under nginx and php-fpm, in Docker, against src/ and dist/tillkite.php. PHP=8.4 picks the PHP version
 	@echo
 	@echo "--> FPM: tests under nginx and php-fpm, in Docker, on PHP $(PHP)"
 	$(call docker_image,$(PHP))
 	$(call docker_run,$(PHP),-e TILLKITE_FPM=1) sh -c 'php bin/dist.php > /dev/null && vendor/bin/pest tests/fpm-tests.php && TILLKITE_DIST=1 vendor/bin/pest tests/fpm-tests.php'
+	@echo
+
+.PHONY: apache
+apache: ## Tests under Apache with mod_php, in Docker, against src/ and dist/tillkite.php. PHP=8.4 picks the PHP version
+	@echo
+	@echo "--> Apache: tests under Apache with mod_php, in Docker, on PHP $(PHP)"
+	$(call docker_apache_image,$(PHP))
+	$(call docker_apache_run,$(PHP),-e TILLKITE_APACHE=1) sh -c 'php bin/dist.php > /dev/null && vendor/bin/pest tests/apache-tests.php && TILLKITE_DIST=1 vendor/bin/pest tests/apache-tests.php'
 	@echo

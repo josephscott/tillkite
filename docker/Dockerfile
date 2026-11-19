@@ -1,11 +1,31 @@
-# The image that make fpm runs in, so it needs nothing installed besides
-# Docker. PHP_VERSION picks the PHP version.
+# The images that make fpm and make apache run in, so neither needs anything
+# installed besides Docker. PHP_VERSION picks the PHP version.
 ARG PHP_VERSION=8.5
 
 FROM composer:2.9.8 AS composer
 
-# Tagged tillkite-dev:VERSION: PHP's official php-fpm image, which has the
-# PHP CLI and OPcache too, plus nginx and Composer.
+# The apache stage, for make apache, tagged tillkite-apache:VERSION: PHP's
+# official Apache image, with PHP as an Apache module, mod_php, as many
+# hosts run it, and Apache's modules, mod_rewrite among them, for the
+# .htaccess. The tests start Apache with a configuration of their
+# own, as user dev.
+FROM php:${PHP_VERSION}-apache AS apache
+
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends unzip \
+	&& rm -rf /var/lib/apt/lists/*
+
+COPY --from=composer /usr/bin/composer /usr/local/bin/composer
+
+RUN useradd --create-home dev \
+	&& mkdir -p /work/vendor \
+	&& chown -R dev:dev /work
+USER dev
+WORKDIR /work
+
+# The last stage, which docker build makes without --target, tagged
+# tillkite-dev:VERSION: PHP's official php-fpm image, which has the PHP CLI
+# and OPcache too, plus nginx and Composer.
 FROM php:${PHP_VERSION}-fpm
 
 RUN apt-get update \

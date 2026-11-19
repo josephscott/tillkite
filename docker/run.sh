@@ -1,6 +1,6 @@
 #!/bin/sh
 # Runs a command in Tillkite's Docker image, in a copy of the repository.
-# make fpm runs it, with the repository mounted read-only
+# make fpm and make apache run it, with the repository mounted read-only
 # at /src, so nothing in it changes.
 #
 # The copy leaves out vendor/, which is a Docker volume for each PHP
