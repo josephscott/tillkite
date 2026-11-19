@@ -144,3 +144,14 @@ function http( int $port, string $method, string $target, array $headers = [], s
 	$result = [ 'status' => (int) explode( ' ', $lines[0] )[1], 'headers' => $headers, 'body' => $body ];
 	return $result;
 }
+
+// What error_log() wrote while $run ran.
+function logged( callable $run ) : string {
+	$file = (string) tempnam( sys_get_temp_dir(), 'tillkite-log-' );
+	$previous = ini_set( 'error_log', $file );
+	$run();
+	ini_set( 'error_log', (string) $previous );
+	$log = (string) file_get_contents( $file );
+	unlink( $file );
+	return $log;
+}

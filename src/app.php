@@ -116,6 +116,9 @@ class App {
 
 	private ?string $method = null;
 
+	// The values that register() was given, by name.
+	private array $registered = [];
+
 	// The parameters of the files that are running, for the error files.
 	private array $params = [];
 
@@ -505,6 +508,37 @@ class App {
 	public function method() : string {
 		$method = $this->method ??= self::server( 'REQUEST_METHOD' ) ?? 'GET';
 		return $method;
+	}
+
+	/**
+	 * Makes a value, like a database connection, available to the
+	 * before-files, handlers, error files and templates, which get it with
+	 * get():
+	 *
+	 *     $tillkite->register( 'db', $db );
+	 *
+	 * Registering a name again replaces its value. It works anywhere, so a
+	 * before-file can register a value for the handler and templates, like
+	 * the visitor's account.
+	 */
+	public function register( string $name, mixed $value ) : void {
+		$this->registered[$name] = $value;
+	}
+
+	/**
+	 * Returns the value registered as $name:
+	 *
+	 *     $db = $tillkite->get( 'db' );
+	 *
+	 * When nothing is registered as $name, it logs that, and returns null.
+	 */
+	public function get( string $name ) : mixed {
+		$value = $this->registered[$name] ?? null;
+		if ( $value === null && ! \array_key_exists( $name, $this->registered ) ) {
+			\error_log( "Tillkite: nothing is registered as '" . Escape::log( $name ) . "', so get() returned null" );
+		}
+
+		return $value;
 	}
 
 	/**
