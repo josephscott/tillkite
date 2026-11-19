@@ -1,0 +1,4 @@
+parameters:
+	level: 5
+	paths:
+		- .php-cs-fixer.dist.php
