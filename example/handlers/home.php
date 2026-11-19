@@ -11,6 +11,18 @@ echo $tillkite->template( 'layout.php', [
 		<dd>A static route, and a dynamic one whose id has to be digits.</dd>
 		</div>
 		<div>
+		<dt><a href="/blog">/blog</a>, <a href="/blog/2026">/blog/2026</a>, <a href="/blog/2026/10">/blog/2026/10</a> and <a href="/blog/2026/10/this-is-the-slug">/blog/2026/10/this-is-the-slug</a></dt>
+		<dd>One route, where each part after <code>/blog</code> is optional. A post that doesn't exist, like <a href="/blog/2026/10/no-such-post">/blog/2026/10/no-such-post</a>, shows the 404 page with <code>error()</code>. The posts come from <code>get()</code>, which returns what <code>index.php</code> gave <code>register()</code>.</dd>
+		</div>
+		<div>
+		<dt><a href="/docs/guide/install">/docs/guide/install</a>, <a href="/docs/guide/routes">/docs/guide/routes</a> and <a href="/docs/guide/nope">/docs/guide/nope</a></dt>
+		<dd>A parameter that takes the rest of the path, which names a file in <code>docs/</code>. The handler finds it with <code>file()</code>, which returns <code>null</code> for a name that isn't a file inside the directory, so a page that doesn't exist is the 404 page.</dd>
+		</div>
+		<div>
+		<dt><a href="/contact">/contact</a></dt>
+		<dd>One route for GET and POST.</dd>
+		</div>
+		<div>
 		<dt><a href="/users/42/">/users/42/</a></dt>
 		<dd>Redirects to the URL without the trailing slash.</dd>
 		</div>

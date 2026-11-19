@@ -2,7 +2,8 @@
 declare( strict_types = 1 );
 
 // register() and get() run in the test's own process, since they work
-// anywhere.
+// anywhere. The example site's blog gets its posts with get() in a real
+// request.
 
 it( 'gets what was registered, the last value for a name registered twice, and logs a name with nothing registered', function() {
 	$tillkite = new Tillkite\App();

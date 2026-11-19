@@ -41,4 +41,13 @@ $tillkite = new Tillkite\App( [
 	'trailing_slash' => false,
 ] );
 
+// The blog's posts, which blog.php gets with $tillkite->get( 'posts' ). A
+// real site might register a database connection this way.
+$tillkite->register( 'posts', [
+	'/blog/2026/10/this-is-the-slug' => 'This is the slug',
+	'/blog/2026/10/optional-parts' => 'Optional parts',
+	'/blog/2026/03/hello-world' => 'Hello, world',
+	'/blog/2025/12/a-year-in-review' => 'A year in review',
+] );
+
 return $tillkite->run();
