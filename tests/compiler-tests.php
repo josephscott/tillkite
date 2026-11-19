@@ -86,12 +86,15 @@ describe( 'compiled tables', function() {
 			[ 'GET', '/a/{id}', 'page.php' ],
 			[ 'GET', '/b/{id:\d+}[/{slug:[a-z-]+}]', 'page.php' ],
 			[ 'GET', '/c/{v:(?:[a-z]|%[0-9A-F]{2})+}', 'page.php' ],
+			[ 'prefix' => '/t/{t:[^./]+}', 'routes' => [ [ 'GET', '/y', 'page.php' ] ] ],
 		] );
 
 		expect( $compiled['checks'] )->toBe( [
 			1 => [ 'id' => '{^(?:\d+)$}sD', 'slug' => '{^(?:[a-z-]+)$}sD' ],
 			2 => [ 'v' => '' ],
+			3 => [ 't' => '{^(?:[^./]+)$}sD' ],
 		] );
+		expect( $compiled['groups'][0]['checks'] )->toBe( [ 't' => '{^(?:[^./]+)$}sD' ] );
 	} );
 
 	it( 'shares how dynamic routes start, even past routes that match other paths', function() {
@@ -183,25 +186,6 @@ describe( 'compiled tables', function() {
 
 		expect( array_keys( $compiled['static']['GET'] ) )->toBe( [ '/caf%C3%A9' ] );
 	} );
-
-	// The app's before file is before.php. A route's files are the
-	// before-files that run, in order, then its buffer option. A route that
-	// runs only the app's, with the app's buffer setting, isn't in files.
-	it( "works out each route's files from the app's and its own options", function( array $options, array $before, ?bool $buffer ) {
-		$compiled = compile_routes( [
-			[ 'GET', '/', 'page.php' ],
-			[ 'GET', '/b', 'page.php', $options ],
-		], [ 'before' => 'before.php' ] );
-
-		$path = fn ( string $file ) => __DIR__ . '/fixtures/handlers/' . $file;
-		expect( $compiled['default_files'] )->toBe( [ $path( 'before.php' ), '', '', null ] );
-		expect( $compiled['files'] )->toBe( [ 1 => [ ...array_pad( array_map( $path, $before ), 3, '' ), $buffer ] ] );
-	} )->with( [
-		"the route's after the app's" => [ [ 'before' => 'route-before.php' ], [ 'before.php', 'route-before.php' ], null ],
-		"only the route's" => [ [ 'before_only' => 'route-before.php' ], [ 'route-before.php' ], null ],
-		'none' => [ [ 'before' => false ], [], null ],
-		"the route's buffer option" => [ [ 'buffer' => false ], [ 'before.php' ], false ],
-	] );
 } );
 
 describe( 'problems', function() {
@@ -239,12 +223,25 @@ describe( 'problems', function() {
 	] );
 
 	// ./before.php names the same file as before.php.
-	it( "reports a route's before-file that's the app's, so it would run twice", function() {
-		$problems = route_problems( [ [ 'GET', '/', 'page.php', [ 'before' => './before.php' ] ] ], [ 'before' => 'before.php' ] );
+	it( 'reports a before-file that runs already, so it would run twice', function( array $routes, string $message ) {
+		$problems = route_problems( $routes, [ 'before' => 'before.php' ] );
 
 		expect( $problems )->toHaveCount( 1 );
-		expect( $problems[0] )->toEndWith( "the before file is the app's before file too, so it would run twice" );
-	} );
+		expect( $problems[0] )->toEndWith( $message );
+	} )->with( [
+		"a route's that's the app's" => [
+			[ [ 'GET', '/', 'page.php', [ 'before' => './before.php' ] ] ],
+			"the before file is the app's before file too, so it would run twice",
+		],
+		"a group's that's the app's" => [
+			[ [ 'prefix' => '/a', 'before' => 'before.php', 'routes' => [] ] ],
+			"the before file is the app's before file too, so it would run twice",
+		],
+		"a route's that's its group's" => [
+			[ [ 'prefix' => '/a', 'before' => 'group-before.php', 'routes' => [ [ 'GET', '', 'page.php', [ 'before' => 'group-before.php' ] ] ] ] ],
+			"the before file is the group's before file too, so it would run twice",
+		],
+	] );
 
 	it( 'reports a bad method', function( mixed $method, string $message ) {
 		$problems = route_problems( [ [ $method, '/', 'page.php' ] ] );
@@ -425,5 +422,104 @@ describe( 'problems', function() {
 			'errors' => [ 403 => '404.php', 404 => '404.php', 405 => '405.php', 500 => '500.php' ],
 			'methods' => [ 'PURGE', 'GET' ],
 		] );
+	} );
+} );
+
+describe( 'groups', function() {
+	it( "joins the prefix to each of the group's patterns, and puts its routes in its place", function() {
+		$compiled = compile_routes( [
+			[ 'GET', '/', 'page.php' ],
+			[ 'prefix' => '/users/{id:\d+}', 'routes' => [
+				[ 'GET', '', 'page.php' ],
+				[ 'GET', '/posts[/{page:\d+}]', 'page.php' ],
+			] ],
+			[ 'GET', '/about', 'page.php' ],
+		] );
+
+		$matcher = new Tillkite\Matcher( $compiled );
+		expect( $matcher->match( 'GET', '/users/5' ) )->toBe( [ 'status' => 200, 'route' => 1, 'params' => [ 'id' => '5' ] ] );
+		expect( $matcher->match( 'GET', '/users/5/posts/2' ) )->toBe( [ 'status' => 200, 'route' => 2, 'params' => [ 'id' => '5', 'page' => '2' ] ] );
+		expect( $matcher->match( 'GET', '/about' )['route'] )->toBe( 3 );
+		expect( $compiled['routes'][2] )->toBe( [ 'GET', '/users/{id:\d+}/posts[/{page:\d+}]', 'page.php' ] );
+	} );
+
+	// The app's before file is before.php. A route's files are the
+	// before-files that run, in order, then the buffer option and its
+	// group's key, which the next test covers. A route that runs only the
+	// app's, with the app's buffer setting, outside a group, isn't in files.
+	it( "works out each route's files from the app's, its group's and its own options", function( array $group, array $options, array $before, ?bool $buffer ) {
+		$compiled = compile_routes( [
+			[ 'GET', '/', 'page.php' ],
+			[ 'prefix' => '/a', 'routes' => [ [ 'GET', '/b', 'page.php', $options ] ] ] + $group,
+		], [ 'before' => 'before.php' ] );
+
+		$path = fn ( string $file ) => __DIR__ . '/fixtures/handlers/' . $file;
+		expect( $compiled['default_files'] )->toBe( [ $path( 'before.php' ), '', '', null, null ] );
+		expect( $compiled['files'] )->toBe( [ 1 => [ ...array_pad( array_map( $path, $before ), 3, '' ), $buffer, 0 ] ] );
+	} )->with( [
+		"the group's after the app's" => [ [ 'before' => 'group-before.php' ], [], [ 'before.php', 'group-before.php' ], null ],
+		"the route's after the group's" => [ [ 'before' => 'group-before.php' ], [ 'before' => 'route-before.php' ], [ 'before.php', 'group-before.php', 'route-before.php' ], null ],
+		"only the group's, then the route's" => [ [ 'before_only' => 'group-before.php' ], [ 'before' => 'route-before.php' ], [ 'group-before.php', 'route-before.php' ], null ],
+		"none from the group, then the route's" => [ [ 'before' => false ], [ 'before' => 'route-before.php' ], [ 'route-before.php' ], null ],
+		"only the route's" => [ [ 'before' => 'group-before.php' ], [ 'before_only' => 'route-before.php' ], [ 'route-before.php' ], null ],
+		'none' => [ [ 'before' => 'group-before.php' ], [ 'before' => false ], [], null ],
+		"the group's buffer option" => [ [ 'buffer' => false ], [], [ 'before.php' ], false ],
+		"the route's buffer option over the group's" => [ [ 'buffer' => false ], [ 'buffer' => true ], [ 'before.php' ], true ],
+	] );
+
+	it( "names a route in a group by the group's number and its own", function() {
+		$problems = route_problems( [
+			[ 'prefix' => '/admin', 'routes' => [
+				[ 'GET', '/users', 'page.php' ],
+				[ 'GET', 'users', 'page.php' ],
+				[ 'prefix' => '/inner', 'routes' => [] ],
+			] ],
+			[ 'GET', '/admin/users', 'page.php' ],
+		] );
+
+		expect( $problems )->toBe( [
+			"Route 1.2 [ 'GET', 'users', 'page.php' ]: in a group, the pattern must start with / or [, or be '' for the prefix by itself",
+			"Group 1.3 [ 'prefix' => '/inner' ]: a group can't be inside another group",
+			"Route 2 [ 'GET', '/admin/users', 'page.php' ]: duplicate of route 1.1",
+		] );
+	} );
+
+	// The group's route has a problem of its own too, which isn't reported
+	// until the group's are fixed.
+	it( 'reports a problem with a group, and leaves out its routes', function( array $group, string $message ) {
+		$problems = route_problems( [ $group + [ 'routes' => [ [ 'GET', '/b', 'missing.php' ] ] ] ] );
+
+		expect( $problems )->toHaveCount( 1 );
+		expect( $problems[0] )->toStartWith( 'Group 1 ' );
+		expect( $problems[0] )->toEndWith( $message );
+	} )->with( [
+		'no prefix' => [ [], "the prefix must start with / and not end with /, like '/admin'" ],
+		'no leading slash' => [ [ 'prefix' => 'admin' ], "the prefix must start with / and not end with /, like '/admin'" ],
+		'a trailing slash' => [ [ 'prefix' => '/admin/' ], "the prefix must start with / and not end with /, like '/admin'" ],
+		'an optional part' => [ [ 'prefix' => '/admin[/{page}]' ], "the prefix can't have optional parts" ],
+		'a bad regex' => [ [ 'prefix' => '/users/{id:(\d+)}' ], 'the regex in {id:(\d+)} has a capturing group; use (?:...) instead' ],
+		'routes not a list' => [ [ 'prefix' => '/admin', 'routes' => 'admin.php' ], 'routes must be a list of routes' ],
+		'unknown key' => [ [ 'prefix' => '/admin', 'handlers' => 'admin' ], "unknown group key 'handlers'" ],
+		'a bad option' => [ [ 'prefix' => '/admin', 'before' => 'missing.php' ], "the before file doesn't exist: " . __DIR__ . '/fixtures/handlers/missing.php' ],
+		'before and before_only' => [ [ 'prefix' => '/admin', 'before' => 'before.php', 'before_only' => 'before.php' ], 'use before or before_only, not both' ],
+		'errors not an array' => [ [ 'prefix' => '/admin', 'errors' => '404.php' ], "errors must be an array, like [ 404 => '404.php' ]" ],
+		'an unknown error code' => [ [ 'prefix' => '/admin', 'errors' => [ 418 => '404.php' ] ], 'unknown error code in errors: 418. Use 500, or a standard 4xx code like 404 or 403' ],
+		'a missing error file' => [ [ 'prefix' => '/admin', 'errors' => [ 404 => 'missing.php' ] ], "the 404 error file doesn't exist: " . __DIR__ . '/fixtures/handlers/missing.php' ],
+	] );
+
+	// Each route in a group has its group's key in groups, where the group
+	// keeps its prefix and error files.
+	it( 'keeps each group, with its prefix and error files', function() {
+		$compiled = compile_routes( [
+			[ 'GET', '/', 'page.php' ],
+			[ 'prefix' => '/api', 'errors' => [ 404 => '404.php' ], 'routes' => [ [ 'GET', '/status', 'page.php' ] ] ],
+			[ 'prefix' => '/plain', 'routes' => [ [ 'GET', '', 'page.php' ] ] ],
+		] );
+
+		expect( array_map( fn ( array $group ) => [ $group['prefix'], $group['errors'] ], $compiled['groups'] ) )->toBe( [
+			[ '/api', [ 404 => '404.php' ] ],
+			[ '/plain', [] ],
+		] );
+		expect( array_map( fn ( array $files ) => $files[4], $compiled['files'] ) )->toBe( [ 1 => 0, 2 => 1 ] );
 	} );
 } );

@@ -18,6 +18,8 @@ final class Compiler {
 
 	public const array ROUTE_OPTIONS = [ 'buffer', 'before', 'before_only' ];
 
+	public const array GROUP_KEYS = [ 'prefix', 'routes', 'buffer', 'before', 'before_only', 'errors' ];
+
 	// A regex with up to this many routes tells them apart by the number of
 	// matches instead of a MARK. See leaf_ends().
 	public const int COUNT_LEAVES = 12;
@@ -40,13 +42,20 @@ final class Compiler {
 
 	public array $problems = [];
 
-	// Every route: [ 'route' => as written, 'label' => like '3', 'name' => its
-	// key in $names, 'chain' => the before-files that run ahead of its own
-	// (see add_before()) ].
+	// Every route, with each group's routes in the group's place:
+	// [ 'route' => as written, 'label' => like '3' or '4.2', 'name' => its key
+	// in $names, 'prefix' => its group's or '', 'chain' => the before-files
+	// that run ahead of its own (see add_before()), 'buffer' => its group's
+	// buffer option or null, 'group' => its group's key in $groups or null ].
 	private array $entries = [];
 
-	// What each route's problems start with, in the order of the routes
-	// file: [ 'Route 4', the route ]. They're exported only for a problem.
+	// Each group, in order: [ the group as compile() returns it in groups,
+	// the regex for a path under its prefix, its number of segments ].
+	private array $groups = [];
+
+	// What each route's or group's problems start with, in the order of the
+	// routes file: [ 'Route 4.2', the route ] or [ 'Group 4', the group
+	// without its routes ]. They're exported only for a problem.
 	private array $names = [];
 
 	// The problems found, by their key in $names.
@@ -61,7 +70,8 @@ final class Compiler {
 	/**
 	 * Returns the compiled tables:
 	 *
-	 * - routes:  each route as written
+	 * - routes:  each route as route() returns it: as written, with its
+	 *            group's prefix joined to its pattern
 	 * - checks:  for each route with parameters that have a regex of their
 	 *            own, [ name => the regex a decoded value has to match too,
 	 *            or '' for none ]. See checks().
@@ -72,21 +82,33 @@ final class Compiler {
 	 * - any:     [ 'static' => ..., 'dynamic' => ... ] for every route of
 	 *            every method, matching with or without a trailing slash
 	 * - default_files: what a route runs that has no before or buffer
-	 *            options: the paths of its before-files in the order they
-	 *            run, with '' for each one fewer than three, then its buffer
-	 *            option, or null for the app's
-	 * - files:   the same for each route that runs something else
+	 *            options and isn't in a group: the paths of its before-files
+	 *            in the order they run, with '' for each one fewer than
+	 *            three, then its buffer option, or null for the app's, then
+	 *            its group's key in groups, or null
+	 * - files:   the same for each route that runs something else, or is in
+	 *            a group
+	 * - groups:  for each group, [ 'prefix' => as written, 'errors' => as
+	 *            written, or [], 'files' => what a miss under its prefix
+	 *            runs, which is what a route in it with no options would,
+	 *            'names' => the names of its prefix's parameters, 'checks' =>
+	 *            their checks, as above ]
+	 * - prefixes: a regex for a path under a group's prefix, whose MARK is
+	 *            the first such group's key in groups, and whose matches are
+	 *            the prefix's parameters, or '' when there are no groups
 	 *
 	 * A route for '*' is added to every method's table, and also gets a '*'
 	 * table for methods that have no routes of their own.
 	 *
-	 * Routes are numbered by their place in the list, starting at 0.
+	 * Routes are numbered by their place in the list, starting at 0, with
+	 * each group's routes in the group's place.
 	 */
 	public function compile( array $routes ) : array {
 		$this->problems = [];
 		$this->entries = [];
 		$this->names = [];
 		$this->entry_problems = [];
+		$this->groups = [];
 
 		$compiled = [
 			'routes' => [],
@@ -94,8 +116,10 @@ final class Compiler {
 			'static' => [],
 			'dynamic' => [],
 			'any' => [ 'static' => [], 'dynamic' => [] ],
-			'default_files' => [ '', '', '', null ],
+			'default_files' => [ '', '', '', null, null ],
 			'files' => [],
+			'groups' => [],
+			'prefixes' => '',
 		];
 
 		$allowed = $this->check_settings();
@@ -126,6 +150,26 @@ final class Compiler {
 					$compiled['files'][$index] = $entry['files'];
 				}
 			}
+		}
+
+		// PCRE takes the first alternative that matches. A path under more
+		// than one group's prefix, like /api/admin/x under /api and
+		// /api/admin, is under the one with the most segments, so its
+		// before-files run for misses under it whatever the order of the
+		// list. Prefixes with as many segments, like /{lang} and /en, keep
+		// their order. In (?|...), each alternative's matches are numbered
+		// from 1.
+		$alternatives = [];
+		$segments = [];
+		foreach ( $this->groups as $key => [ $group, $regex, $count ] ) {
+			$compiled['groups'][] = $group;
+			$alternatives[$key] = $regex . '(*:' . $key . ')';
+			$segments[$key] = $count;
+		}
+
+		\uksort( $alternatives, static fn ( int $a, int $b ) : int => $segments[$b] <=> $segments[$a] );
+		if ( $alternatives !== [] ) {
+			$compiled['prefixes'] = '{^(?|' . \implode( '|', $alternatives ) . ')}D';
 		}
 
 		$blocked = [];
@@ -276,8 +320,12 @@ final class Compiler {
 		return $allowed;
 	}
 
-	// Checks the error files.
-	private function error_problems( array $errors ) : array {
+	// Checks the error files, the app's or a group's.
+	private function error_problems( mixed $errors ) : array {
+		if ( ! \is_array( $errors ) ) {
+			return [ "errors must be an array, like [ 404 => '404.php' ]" ];
+		}
+
 		$problems = [];
 		foreach ( $errors as $code => $file ) {
 			if ( ! isset( App::REASONS[$code] ) ) {
@@ -292,6 +340,9 @@ final class Compiler {
 		return $problems;
 	}
 
+	// Fills $entries with every route, putting each group's routes in the
+	// group's place, and checks the groups. A group with problems leaves out
+	// its routes, so they don't each repeat its problem.
 	private function list_routes( array $routes ) : void {
 		$chain = [];
 		if ( $this->before !== null ) {
@@ -299,25 +350,170 @@ final class Compiler {
 		}
 
 		foreach ( $routes as $position => $route ) {
-			$this->add_entry( (string) ( $position + 1 ), $route, $chain );
+			$label = (string) ( $position + 1 );
+			if ( ! $this->is_group( $route ) ) {
+				$this->add_entry( $label, $route, '', $chain, null, null );
+				continue;
+			}
+
+			$group = $this->parse_group( $label, $route, $chain );
+			if ( $group === null ) {
+				continue;
+			}
+
+			foreach ( $route['routes'] as $inner => $inner_route ) {
+				$inner_label = $label . '.' . ( $inner + 1 );
+				if ( $this->is_group( $inner_route ) ) {
+					$this->names[] = [ 'Group ' . $inner_label, $this->shown_group( $inner_route ) ];
+					$this->entry_problem( \array_key_last( $this->names ), "a group can't be inside another group" );
+					continue;
+				}
+
+				$this->add_entry( $inner_label, $inner_route, $route['prefix'], $group['chain'], $group['buffer'], $group['key'] );
+			}
 		}
 	}
 
-	private function add_entry( string $label, mixed $route, array $chain ) : void {
+	// A group has a prefix or routes key. A route is a list, so it has
+	// neither.
+	private function is_group( mixed $entry ) : bool {
+		$group = \is_array( $entry ) && ( \array_key_exists( 'prefix', $entry ) || \array_key_exists( 'routes', $entry ) );
+		return $group;
+	}
+
+	// A group as its problems show it, without its routes.
+	private function shown_group( array $group ) : array {
+		unset( $group['routes'] );
+		return $group;
+	}
+
+	private function add_entry( string $label, mixed $route, string $prefix, array $chain, ?bool $buffer, ?int $group ) : void {
 		$this->names[] = [ 'Route ' . $label, $route ];
 		$this->entries[] = [
 			'route' => $route,
 			'label' => $label,
 			'name' => \array_key_last( $this->names ),
+			'prefix' => $prefix,
 			'chain' => $chain,
+			'buffer' => $buffer,
+			'group' => $group,
 		];
 	}
 
-	// Returns the before-files that run for a route, from the app's and its
-	// own options. 'before' adds a file after them, 'before_only' runs a file
-	// in their place, and 'before' => false runs none. Each is [ file, whose
-	// it is ], starting with [ the app's before file, "the app's" ]. Returns a
-	// problem message when the route's before file runs already.
+	// Returns [ 'chain' => the before-files that run ahead of each route's
+	// own, 'buffer' => the group's buffer option or null, 'key' => its key in
+	// $groups ], or null when the group has problems.
+	private function parse_group( string $label, array $group, array $chain ) : ?array {
+		$this->names[] = [ 'Group ' . $label, $this->shown_group( $group ) ];
+		$name = \array_key_last( $this->names );
+
+		$errors = [];
+		$prefix = $this->parse_prefix( $group['prefix'] ?? null );
+		if ( \is_string( $prefix ) ) {
+			$errors[] = $prefix;
+		}
+
+		if ( ! \is_array( $group['routes'] ?? null ) || ! \array_is_list( $group['routes'] ) ) {
+			$errors[] = 'routes must be a list of routes';
+		}
+
+		foreach ( $group as $key => $value ) {
+			$error = '';
+			if ( ! \in_array( $key, self::GROUP_KEYS, true ) ) {
+				$error = "unknown group key '" . $key . "'";
+			} elseif ( \in_array( $key, self::ROUTE_OPTIONS, true ) ) {
+				$error = $this->option_error( $key, $value );
+			}
+
+			if ( $error !== '' ) {
+				$errors[] = $error;
+			}
+		}
+
+		if ( isset( $group['before'], $group['before_only'] ) ) {
+			$errors[] = 'use before or before_only, not both';
+		}
+
+		if ( \array_key_exists( 'errors', $group ) ) {
+			\array_push( $errors, ...$this->error_problems( $group['errors'] ) );
+		}
+
+		if ( $errors === [] ) {
+			$added = $this->add_before( $chain, $group, "the group's" );
+			if ( \is_string( $added ) ) {
+				$errors[] = $added;
+			} else {
+				$chain = $added;
+			}
+		}
+
+		foreach ( $errors as $error ) {
+			$this->entry_problem( $name, $error );
+		}
+
+		if ( $errors !== [] ) {
+			return null;
+		}
+
+		$key = \count( $this->groups );
+		$buffer = $group['buffer'] ?? null;
+		[ $regex, $names, $segments, $checks ] = $prefix;
+		$compiled = [
+			'prefix' => $group['prefix'],
+			'errors' => $group['errors'] ?? [],
+			'files' => $this->files( $chain, $buffer, $key ),
+			'names' => $names,
+			'checks' => $checks,
+		];
+		$this->groups[] = [ $compiled, $regex, $segments ];
+		$parsed = [ 'chain' => $chain, 'buffer' => $buffer, 'key' => $key ];
+		return $parsed;
+	}
+
+	// Returns [ the regex for a path that the prefix starts, which is the
+	// prefix, then a / or the end, the names of its parameters, its number of
+	// segments, its checks ], or a problem message. Each parameter is a match.
+	//
+	// The prefix is joined to each of the group's patterns, which are
+	// checked then. Here it only has to be a pattern on its own, without
+	// optional parts, which go at the end of a pattern.
+	private function parse_prefix( mixed $prefix ) : array|string {
+		if ( ! \is_string( $prefix ) || ! \str_starts_with( $prefix, '/' ) || \str_ends_with( $prefix, '/' ) ) {
+			return "the prefix must start with / and not end with /, like '/admin'";
+		}
+
+		$tokens = $this->tokenize( $prefix );
+		if ( \is_string( $tokens ) ) {
+			return $tokens;
+		}
+
+		$regex = '';
+		$names = [];
+		$segments = 0;
+		foreach ( $tokens as $token ) {
+			if ( $token['type'] === '[' || $token['type'] === ']' ) {
+				return "the prefix can't have optional parts";
+			}
+
+			if ( $token['type'] === 'literal' ) {
+				$regex .= \preg_quote( $this->encode( $token['text'] ) );
+				$segments += \substr_count( $token['text'], '/' );
+			} else {
+				$regex .= '(' . $token['regex'] . ')';
+				$names[] = $token['name'];
+			}
+		}
+
+		$regex .= '(?:/|$)';
+		return [ $regex, $names, $segments, $this->checks( $tokens ) ];
+	}
+
+	// Returns the before-files that run for one level, the group's or the
+	// route's, from those of the levels above it and its own options.
+	// 'before' adds a file after them, 'before_only' runs a file in their
+	// place, and 'before' => false runs none. Each is [ file, whose it is ],
+	// starting with [ the app's before file, "the app's" ]. Returns a problem
+	// message when the level's before file runs already.
 	private function add_before( array $chain, array $options, string $whose ) : array|string {
 		if ( isset( $options['before_only'] ) ) {
 			$chain = [ [ $options['before_only'], $whose ] ];
@@ -346,8 +542,9 @@ final class Compiler {
 	}
 
 	// Returns [ 'methods' => as parse_methods() returns them, 'variants' =>
-	// as parse_pattern() returns them, 'route' => as written, 'files' => what
-	// it runs, as compile() describes ], or null when the route has problems.
+	// as parse_pattern() returns them, 'route' => as route() returns it,
+	// 'files' => what it runs, as compile() describes ], or null when the
+	// route has problems.
 	private function parse_route( int $index, array $allowed ) : ?array {
 		$entry = $this->entries[$index];
 		$route = $entry['route'];
@@ -363,8 +560,10 @@ final class Compiler {
 		}
 
 		$pattern = 'the pattern must be a string';
-		if ( \is_string( $route[1] ) ) {
-			$pattern = $this->parse_pattern( $route[1] );
+		if ( \is_string( $route[1] ) && ! $this->fits_prefix( $entry['prefix'], $route[1] ) ) {
+			$pattern = "in a group, the pattern must start with / or [, or be '' for the prefix by itself";
+		} elseif ( \is_string( $route[1] ) ) {
+			$pattern = $this->parse_pattern( $entry['prefix'] . $route[1] );
 		}
 
 		if ( \is_string( $pattern ) ) {
@@ -416,20 +615,21 @@ final class Compiler {
 			return null;
 		}
 
+		$route[1] = $entry['prefix'] . $route[1];
 		$parsed = [
 			'methods' => $methods,
 			'variants' => $pattern,
 			'route' => $route,
-			'files' => $this->files( $chain, $options['buffer'] ?? null ),
+			'files' => $this->files( $chain, $options['buffer'] ?? $entry['buffer'], $entry['group'] ),
 		];
 		return $parsed;
 	}
 
 	// What a route runs, as compile() describes it: the paths of the
-	// before-files in $chain, with '' for each one fewer than three, then its
-	// buffer option.
-	private function files( array $chain, ?bool $buffer ) : array {
-		$files = [ '', '', '', $buffer ];
+	// before-files in $chain, with '' for each one fewer than three, its
+	// buffer option and its group's key in groups.
+	private function files( array $chain, ?bool $buffer, ?int $group ) : array {
+		$files = [ '', '', '', $buffer, $group ];
 		foreach ( $chain as $position => [ $before ] ) {
 			$files[$position] = $this->path( $before );
 		}
@@ -503,6 +703,13 @@ final class Compiler {
 		}
 
 		return $error;
+	}
+
+	// In a group, a pattern goes on after the prefix: with a /, with an
+	// optional part, or not at all.
+	private function fits_prefix( string $prefix, string $pattern ) : bool {
+		$fits = $prefix === '' || $pattern === '' || \str_starts_with( $pattern, '/' ) || \str_starts_with( $pattern, '[' );
+		return $fits;
 	}
 
 	// Whether two file names, relative to handlers, are the same file.
