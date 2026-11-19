@@ -39,9 +39,19 @@ analyze: ## Static analysis, catch problems in code
 	vendor/bin/phpstan
 	@echo
 
-.PHONY: tests
-tests: ## Pest tests
+.PHONY: dist
+dist: ## Build dist/tillkite.php, every class in src/ in one file, and App::SOURCE_HASH
 	@echo
-	@echo "--> Tests: Pest"
+	@echo "--> Dist: dist/tillkite.php"
+	php bin/dist.php
+	@echo
+
+.PHONY: tests
+tests: dist ## Pest tests, against src/ and then dist/tillkite.php
+	@echo
+	@echo "--> Tests: Pest, against src/"
 	vendor/bin/pest
+	@echo
+	@echo "--> Tests: Pest, against dist/tillkite.php"
+	TILLKITE_DIST=1 vendor/bin/pest
 	@echo

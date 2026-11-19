@@ -3,6 +3,7 @@ parameters:
 	paths:
 		- src
 		- tests
+		- bin
 		- .php-cs-fixer.dist.php
 	excludePaths:
 		# Handlers only run inside App, which gives them $tillkite and $params,

@@ -3,6 +3,22 @@ declare( strict_types = 1 );
 
 // Pest loads this file before running the tests. It must be named Pest.php.
 
+// With TILLKITE_DIST=1, the tests run against dist/tillkite.php instead of
+// src/. It's loaded before any class is used, so the autoloader never loads
+// src/, and the php -S servers load it first with auto_prepend_file.
+function dist_file() : string {
+	$file = '';
+	if ( getenv( 'TILLKITE_DIST' ) === '1' ) {
+		$file = dirname( __DIR__ ) . '/dist/tillkite.php';
+	}
+
+	return $file;
+}
+
+if ( dist_file() !== '' ) {
+	require dist_file();
+}
+
 // A compiler whose handlers directory is tests/fixtures/handlers.
 function make_compiler( array $settings = [] ) : Tillkite\Compiler {
 	$compiler = new Tillkite\Compiler();
@@ -83,7 +99,7 @@ function serve( string $public ) : array {
 	$port = free_port();
 
 	$output = [ 'file', $log, 'a' ];
-	$command = [ PHP_BINARY, '-d', 'opcache.enable_cli=1', '-d', 'output_buffering=0', '-d', 'display_errors=0', '-d', 'log_errors=1', '-d', 'error_log=' . $log, '-S', '127.0.0.1:' . $port, '-t', $public, $public . '/index.php' ];
+	$command = [ PHP_BINARY, '-d', 'auto_prepend_file=' . dist_file(), '-d', 'opcache.enable_cli=1', '-d', 'output_buffering=0', '-d', 'display_errors=0', '-d', 'log_errors=1', '-d', 'error_log=' . $log, '-S', '127.0.0.1:' . $port, '-t', $public, $public . '/index.php' ];
 	$process = proc_open( $command, [ [ 'file', '/dev/null', 'r' ], $output, $output ], $pipes );
 	register_shutdown_function( function() use ( $process, $log ) : void {
 		proc_terminate( $process );

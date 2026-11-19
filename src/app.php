@@ -101,6 +101,11 @@ class App {
 	// Tillkite's version. A release sets it.
 	private const string VERSION = '0.0.0';
 
+	// A hash of every file in src/, which make dist writes. It's part of the
+	// route cache's key, so code that compiles the routes differently, even
+	// between releases, never reads a cache that older code wrote.
+	private const string SOURCE_HASH = 'd7984df463a00d54b6bdd57a962dff66';
+
 	// The errors that end a request without an exception, such as running
 	// out of memory or time, or an uncaught exception with no 500 file.
 	//
@@ -895,7 +900,7 @@ class App {
 		if ( $this->cache !== '' ) {
 			// Every setting that changes the compiled routes or the problems found,
 			// and Tillkite's code. Encoding only the arrays keeps this quick.
-			$settings = self::VERSION . "\n" . $this->handlers . "\n" . $this->before . "\n" . (int) $this->trailing_slash . \json_encode( [ $this->methods, $this->errors ] );
+			$settings = self::VERSION . ' ' . self::SOURCE_HASH . "\n" . $this->handlers . "\n" . $this->before . "\n" . (int) $this->trailing_slash . \json_encode( [ $this->methods, $this->errors ] );
 			if ( \PHP_SAPI === 'cli-server' ) {
 				$settings .= $this->source_times();
 			}
