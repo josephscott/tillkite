@@ -19,14 +19,37 @@ test( 'vendor/bin/tillkite new makes a site that answers its routes', function()
 	umask( $umask );
 	expect( $made['code'] )->toBe( 0 );
 	expect( [ fileperms( $dir . '/my-site/var' ) & 0o777, fileperms( $dir . '/my-site/handlers/home.php' ) & 0o777 ] )->toBe( [ 0o775, 0o664 ] );
-	expect( $made['output'] )->toBe( "Made a Tillkite site in my-site:\n\n  init.php\n  public/index.php\n  public/style.css\n  routes.php\n  handlers/home.php\n  templates/layout.php\n  var/.gitignore\n" );
+	expect( $made['output'] )->toBe( "Made a Tillkite site in my-site:\n\n  init.php\n  public/index.php\n  public/style.css\n  routes.php\n  handlers/before.php\n  handlers/home.php\n  handlers/hello.php\n  handlers/404.php\n  handlers/405.php\n  handlers/500.php\n  templates/layout.php\n  var/.gitignore\n" );
 
+	// A route whose handler throws, for the 500 page.
 	$site = $dir . '/my-site';
+	file_put_contents( $site . '/routes.php', str_replace( "'hello.php' ],", "'hello.php' ],\n\t[ 'GET', '/boom', 'boom.php' ],", (string) file_get_contents( $site . '/routes.php' ) ) );
+	file_put_contents( $site . '/handlers/boom.php', "<?php throw new LogicException( 'Boom' );\n" );
+
 	$port = serve( $site . '/public' )['port'];
 	$home = http( $port, 'GET', '/' );
 	expect( $home['status'] )->toBe( 200 );
 	expect( $home['body'] )->toContain( '<title>It works</title>' );
+	expect( http( $port, 'GET', '/hello/Ada%20%3Cb%3E' )['body'] )->toContain( '<h1>Hello, Ada &lt;b&gt;</h1>' );
 	expect( http( $port, 'GET', '/style.css' )['body'] )->toContain( 'color-scheme' );
+
+	$missing = http( $port, 'GET', '/nope' );
+	expect( $missing['status'] )->toBe( 404 );
+	expect( $missing['body'] )->toContain( '<code>/nope</code>' );
+	expect( $missing['headers'] )->toMatchArray( [
+		'x-content-type-options' => 'nosniff',
+		'referrer-policy' => 'strict-origin-when-cross-origin',
+		'content-security-policy' => "frame-ancestors 'none'",
+	] );
+
+	$post = http( $port, 'POST', '/' );
+	expect( $post['status'] )->toBe( 405 );
+	expect( $post['body'] )->toContain( 'take POST requests' );
+
+	$boom = http( $port, 'GET', '/boom' );
+	expect( $boom['status'] )->toBe( 500 );
+	expect( $boom['body'] )->toContain( 'LogicException: Boom' );
+
 	expect( glob( $site . '/var/tillkite-*.php' ) )->toHaveCount( 1 );
 } );
 
