@@ -107,6 +107,15 @@ class App {
 	// page that report_problems() sends in place of the site's own.
 	private array $setup = [];
 
+	// The matched route, as route() returns it.
+	private ?array $route = null;
+
+	// The request's URI and method, as uri() and method() return them, read
+	// when run() or they first need them.
+	private ?string $uri = null;
+
+	private ?string $method = null;
+
 	// The parameters of the files that are running, for the error files.
 	private array $params = [];
 
@@ -164,7 +173,7 @@ class App {
 			\ini_set( 'display_errors', '0' );
 		}
 
-		$path = self::server( 'REQUEST_URI' ) ?? '/';
+		$path = $this->uri();
 		$query = '';
 		$mark = \strpos( $path, '?' );
 		if ( $mark !== false ) {
@@ -183,7 +192,7 @@ class App {
 		}
 
 		\register_shutdown_function( $this->shutdown( ... ) );
-		$this->respond( $compiled, self::server( 'REQUEST_METHOD' ) ?? 'GET', $path, $query );
+		$this->respond( $compiled, $this->method(), $path, $query );
 		return true;
 	}
 
@@ -199,7 +208,8 @@ class App {
 
 		$result = $this->match( $compiled, $method, $path );
 		if ( $result['status'] === 200 ) {
-			$this->run_route( $before, $this->handlers . '/' . $compiled['routes'][$result['route']][2], $result['params'] );
+			$this->route = $compiled['routes'][$result['route']];
+			$this->run_route( $before, $this->handlers . '/' . $this->route[2], $result['params'] );
 			return;
 		}
 
@@ -472,6 +482,29 @@ class App {
 		}
 
 		return $value;
+	}
+
+	// Returns the matched route as written in the routes file, or null if
+	// nothing matched.
+	public function route() : ?array {
+		$route = $this->route;
+		return $route;
+	}
+
+	// Returns the request's URI as the web server sent it, with its query
+	// string and before base is taken off, like '/blog?page=2'. It's
+	// $_SERVER['REQUEST_URI'], read without building $_SERVER, which takes
+	// about 4 µs, on every request that names it.
+	public function uri() : string {
+		$uri = $this->uri ??= self::server( 'REQUEST_URI' ) ?? '/';
+		return $uri;
+	}
+
+	// Returns the request's method, like 'GET' or 'POST'. It's
+	// $_SERVER['REQUEST_METHOD'], read without building $_SERVER.
+	public function method() : string {
+		$method = $this->method ??= self::server( 'REQUEST_METHOD' ) ?? 'GET';
+		return $method;
 	}
 
 	/**

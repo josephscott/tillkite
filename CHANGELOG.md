@@ -22,3 +22,4 @@ All notable changes to Tillkite are recorded here. The format follows [Keep a Ch
 - The `base` option mounts the app under a URL prefix, like `/app`. It's removed from the path before matching, a path outside it gets a 404, and redirects keep it.
 - Under `php -S`, `run()` returns `false` for a file in the document root, so `php -S` serves it, unless it's a PHP file, which is routed like any other path, so the front controller is the only PHP a request runs.
 - A handlers or cache directory inside the document root, where a request could get or run its files directly, is a problem with the site's setup.
+- `$tillkite->uri()` and `$tillkite->method()` return the request's URI and method, without building `$_SERVER`, and `$tillkite->route()` returns the matched route as written in the routes file.

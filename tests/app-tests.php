@@ -82,6 +82,14 @@ describe( 'routing', function() {
 		expect( request( 'GET', '/scope' )['body'] )->toBe( '{"vars":["tillkite","params"],"private":false}' );
 	} );
 
+	it( "runs a '*' route for any method, and gives the request's method and URI from method() and uri()", function() {
+		expect( request( 'DELETE', '/anything?a=1' )['body'] )->toBe( 'DELETE /anything?a=1' );
+	} );
+
+	it( 'returns the matched route from route(), as written', function() {
+		expect( request( 'GET', '/route/x' )['body'] )->toBe( '["GET","\\/route\\/{name}","route.php"]' );
+	} );
+
 	it( 'sends a plain-text 404 and 405 when there are no error files', function() {
 		$missing = request( 'GET', '/nope' );
 		$wrong_method = request( 'POST', '/users/5' );
