@@ -14,6 +14,8 @@ namespace Tillkite;
 final class Compiler {
 	public const array STANDARD_METHODS = [ 'GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'CONNECT', 'TRACE' ];
 
+	public const string DEFAULT_REGEX = '[^/]+';
+
 	public array $methods = [];
 
 	public string $handlers = '';
@@ -114,8 +116,9 @@ final class Compiler {
 		];
 	}
 
-	// Returns [ 'methods' => as parse_methods() returns them, 'route' => as
-	// written ], or null when the route has problems.
+	// Returns [ 'methods' => as parse_methods() returns them, 'tokens' => as
+	// parse_pattern() returns them, 'route' => as written ], or null when the
+	// route has problems.
 	private function parse_route( int $index, array $allowed ) : ?array {
 		$route = $this->entries[$index]['route'];
 		if ( ! \is_array( $route ) || ! \array_is_list( $route ) || \count( $route ) < 3 || \count( $route ) > 4 ) {
@@ -127,6 +130,15 @@ final class Compiler {
 		$methods = $this->parse_methods( $route[0], $allowed );
 		if ( \is_string( $methods ) ) {
 			$errors[] = $methods;
+		}
+
+		$pattern = 'the pattern must be a string';
+		if ( \is_string( $route[1] ) ) {
+			$pattern = $this->parse_pattern( $route[1] );
+		}
+
+		if ( \is_string( $pattern ) ) {
+			$errors[] = $pattern;
 		}
 
 		$file = $route[2];
@@ -146,6 +158,7 @@ final class Compiler {
 
 		$parsed = [
 			'methods' => $methods,
+			'tokens' => $pattern,
 			'route' => $route,
 		];
 		return $parsed;
@@ -198,6 +211,143 @@ final class Compiler {
 		}
 
 		return $error;
+	}
+
+	// Returns the pattern's tokens, or a problem message.
+	private function parse_pattern( string $pattern ) : array|string {
+		if ( ! \str_starts_with( $pattern, '/' ) ) {
+			return 'the pattern must start with /';
+		}
+
+		$tokens = $this->tokenize( $pattern );
+		if ( \is_string( $tokens ) ) {
+			return $tokens;
+		}
+
+		$names = [];
+		foreach ( $tokens as $token ) {
+			if ( $token['type'] !== 'param' ) {
+				continue;
+			}
+
+			if ( \in_array( $token['name'], $names, true ) ) {
+				return "duplicate parameter name '" . $token['name'] . "'";
+			}
+
+			$names[] = $token['name'];
+		}
+
+		return $tokens;
+	}
+
+	// Splits a pattern into literal, param, [ and ] tokens, or returns a
+	// problem message.
+	private function tokenize( string $pattern ) : array|string {
+		$tokens = [];
+		$literal = '';
+		$length = \strlen( $pattern );
+		$i = 0;
+		while ( $i < $length ) {
+			$char = $pattern[$i];
+			if ( $char === '}' ) {
+				return 'unbalanced { } in the pattern';
+			}
+
+			if ( $char !== '{' && $char !== '[' && $char !== ']' ) {
+				$literal .= $char;
+				$i++;
+				continue;
+			}
+
+			if ( $literal !== '' ) {
+				$tokens[] = [ 'type' => 'literal', 'text' => $literal ];
+				$literal = '';
+			}
+
+			if ( $char !== '{' ) {
+				$tokens[] = [ 'type' => $char ];
+				$i++;
+				continue;
+			}
+
+			$end = $this->closing_brace( $pattern, $i );
+			if ( $end === -1 ) {
+				return 'unbalanced { } in the pattern';
+			}
+
+			$param = $this->parse_param( \substr( $pattern, $i + 1, $end - $i - 1 ) );
+			if ( \is_string( $param ) ) {
+				return $param;
+			}
+
+			$tokens[] = $param;
+			$i = $end + 1;
+		}
+
+		if ( $literal !== '' ) {
+			$tokens[] = [ 'type' => 'literal', 'text' => $literal ];
+		}
+
+		return $tokens;
+	}
+
+	// Returns the position of the } that closes the { at $start, or -1.
+	// Braces inside the parameter's regex are counted, and escaped ones skipped.
+	private function closing_brace( string $pattern, int $start ) : int {
+		$depth = 0;
+		$length = \strlen( $pattern );
+		for ( $i = $start; $i < $length; $i++ ) {
+			$char = $pattern[$i];
+			if ( $char === '\\' ) {
+				$i++;
+				continue;
+			}
+
+			if ( $char === '{' ) {
+				$depth++;
+			}
+
+			if ( $char === '}' ) {
+				$depth--;
+			}
+
+			if ( $depth === 0 ) {
+				return $i;
+			}
+		}
+
+		return -1;
+	}
+
+	// Parses the inside of {name} or {name:regex}.
+	private function parse_param( string $body ) : array|string {
+		$name = $body;
+		$regex = self::DEFAULT_REGEX;
+		$colon = \strpos( $body, ':' );
+		if ( $colon !== false ) {
+			$name = \substr( $body, 0, $colon );
+			$regex = \substr( $body, $colon + 1 );
+		}
+
+		if ( $name === '' ) {
+			return 'empty parameter name in {' . $body . '}';
+		}
+
+		if ( \preg_match( '/^[a-zA-Z_][a-zA-Z0-9_]*$/D', $name ) !== 1 ) {
+			return "invalid parameter name '" . $name . "' (use letters, digits and _)";
+		}
+
+		if ( $regex === '' ) {
+			return 'empty regex in {' . $body . '}';
+		}
+
+		$param = [
+			'type' => 'param',
+			'name' => $name,
+			'regex' => $regex,
+			'source' => '{' . $body . '}',
+		];
+		return $param;
 	}
 
 	private function route_problem( int $index, string $message ) : void {

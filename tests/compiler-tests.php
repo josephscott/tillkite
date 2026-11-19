@@ -34,6 +34,7 @@ describe( 'problems', function() {
 		'too short' => [ [ 'GET', '/' ], 'each route must be [ method, pattern, file ], with optional route options' ],
 		'too long' => [ [ 'GET', '/', 'page.php', [], [] ], 'each route must be [ method, pattern, file ], with optional route options' ],
 		'keyed' => [ [ 'method' => 'GET', 'pattern' => '/', 'file' => 'page.php' ], 'each route must be [ method, pattern, file ], with optional route options' ],
+		'pattern not a string' => [ [ 'GET', 42, 'page.php' ], 'the pattern must be a string' ],
 		'empty file' => [ [ 'GET', '/', '' ], 'the file must be a file name' ],
 	] );
 
@@ -48,6 +49,29 @@ describe( 'problems', function() {
 		'* with others' => [ [ '*', 'GET' ], "'*' can't be combined with other methods" ],
 		'empty list' => [ [], 'the method must be a string or a list of strings' ],
 	] );
+
+	it( 'reports a bad pattern', function( string $pattern, string $message ) {
+		$problems = route_problems( [ [ 'GET', $pattern, 'page.php' ] ] );
+
+		expect( $problems )->toHaveCount( 1 );
+		expect( $problems[0] )->toEndWith( $message );
+	} )->with( [
+		'no leading slash' => [ 'users', 'the pattern must start with /' ],
+		'unclosed brace' => [ '/users/{id', 'unbalanced { } in the pattern' ],
+		'stray brace' => [ '/users/id}', 'unbalanced { } in the pattern' ],
+		'empty regex' => [ '/users/{id:}', 'empty regex in {id:}' ],
+		'duplicate name' => [ '/{a}/{a}', "duplicate parameter name 'a'" ],
+		'empty name' => [ '/users/{}', 'empty parameter name in {}' ],
+		'invalid name' => [ '/users/{1st}', "invalid parameter name '1st' (use letters, digits and _)" ],
+		'name with a newline' => [ "/users/{id\n}", "invalid parameter name 'id\n' (use letters, digits and _)" ],
+	] );
+
+	it( 'accepts braces and escaped braces in a regex', function() {
+		compile_routes( [
+			[ 'GET', '/year/{year:\d{4}}', 'page.php' ],
+			[ 'GET', '/brace/{b:\{}', 'page.php' ],
+		] );
+	} );
 
 	it( 'accepts a method, a list, * and custom methods', function() {
 		compile_routes( [
