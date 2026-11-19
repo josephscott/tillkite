@@ -53,7 +53,7 @@ final class Compiler {
 
 		$this->list_routes( $routes );
 		foreach ( \array_keys( $this->entries ) as $index ) {
-			$entry = $this->parse_route( $index );
+			$entry = $this->parse_route( $index, $allowed );
 			if ( $entry !== null ) {
 				$compiled['routes'][$index] = $entry['route'];
 			}
@@ -114,8 +114,9 @@ final class Compiler {
 		];
 	}
 
-	// Returns [ 'route' => as written ], or null when the route has problems.
-	private function parse_route( int $index ) : ?array {
+	// Returns [ 'methods' => as parse_methods() returns them, 'route' => as
+	// written ], or null when the route has problems.
+	private function parse_route( int $index, array $allowed ) : ?array {
 		$route = $this->entries[$index]['route'];
 		if ( ! \is_array( $route ) || ! \array_is_list( $route ) || \count( $route ) < 3 || \count( $route ) > 4 ) {
 			$this->route_problem( $index, 'each route must be [ method, pattern, file ], with optional route options' );
@@ -123,6 +124,11 @@ final class Compiler {
 		}
 
 		$errors = [];
+		$methods = $this->parse_methods( $route[0], $allowed );
+		if ( \is_string( $methods ) ) {
+			$errors[] = $methods;
+		}
+
 		$file = $route[2];
 		if ( ! \is_string( $file ) || $file === '' ) {
 			$errors[] = 'the file must be a file name';
@@ -139,9 +145,59 @@ final class Compiler {
 		}
 
 		$parsed = [
+			'methods' => $methods,
 			'route' => $route,
 		];
 		return $parsed;
+	}
+
+	// Returns the sorted list of methods, or a problem message. A GET route
+	// also answers HEAD, so GET brings HEAD with it.
+	private function parse_methods( mixed $value, array $allowed ) : array|string {
+		$list = $value;
+		if ( \is_string( $value ) ) {
+			$list = [ $value ];
+		}
+
+		if ( ! \is_array( $list ) || $list === [] || ! \array_is_list( $list ) ) {
+			return 'the method must be a string or a list of strings';
+		}
+
+		if ( $list === [ '*' ] ) {
+			return $list;
+		}
+
+		$methods = [];
+		foreach ( $list as $method ) {
+			$error = $this->method_error( $method, $allowed );
+			if ( $error !== '' ) {
+				return $error;
+			}
+
+			$methods[] = $method;
+			if ( $method === 'GET' ) {
+				$methods[] = 'HEAD';
+			}
+		}
+
+		$methods = \array_values( \array_unique( $methods ) );
+		\sort( $methods );
+		return $methods;
+	}
+
+	private function method_error( mixed $method, array $allowed ) : string {
+		$error = '';
+		if ( ! \is_string( $method ) ) {
+			$error = 'the method must be a string or a list of strings';
+		} elseif ( $method === '*' ) {
+			$error = "'*' can't be combined with other methods";
+		} elseif ( \strtoupper( $method ) !== $method ) {
+			$error = "methods must be uppercase: use '" . \strtoupper( $method ) . "', not '" . $method . "'";
+		} elseif ( ! \in_array( $method, $allowed, true ) ) {
+			$error = "unknown method '" . $method . "' (add custom methods with the methods option)";
+		}
+
+		return $error;
 	}
 
 	private function route_problem( int $index, string $message ) : void {

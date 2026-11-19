@@ -37,6 +37,27 @@ describe( 'problems', function() {
 		'empty file' => [ [ 'GET', '/', '' ], 'the file must be a file name' ],
 	] );
 
+	it( 'reports a bad method', function( mixed $method, string $message ) {
+		$problems = route_problems( [ [ $method, '/', 'page.php' ] ] );
+
+		expect( $problems )->toHaveCount( 1 );
+		expect( $problems[0] )->toEndWith( $message );
+	} )->with( [
+		'lowercase' => [ 'get', "methods must be uppercase: use 'GET', not 'get'" ],
+		'unknown' => [ 'FETCH', "unknown method 'FETCH' (add custom methods with the methods option)" ],
+		'* with others' => [ [ '*', 'GET' ], "'*' can't be combined with other methods" ],
+		'empty list' => [ [], 'the method must be a string or a list of strings' ],
+	] );
+
+	it( 'accepts a method, a list, * and custom methods', function() {
+		compile_routes( [
+			[ 'GET', '/a', 'page.php' ],
+			[ [ 'GET', 'POST' ], '/b', 'page.php' ],
+			[ '*', '/c', 'page.php' ],
+			[ 'PURGE', '/d', 'page.php' ],
+		], [ 'methods' => [ 'PURGE' ] ] );
+	} );
+
 	it( 'reports a routes list with keys', function() {
 		$problems = route_problems( [ 'home' => [ 'GET', '/', 'page.php' ] ] );
 
