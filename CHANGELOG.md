@@ -51,3 +51,4 @@ All notable changes to Tillkite are recorded here. The format follows [Keep a Ch
 - A route too large for PCRE to compile is reported once, without PCRE's offset, which points into Tillkite's joined regex, not the route's pattern, and differs between PCRE versions.
 - The route cache's key has a hash of Tillkite's code, so a cache that other code wrote is never read, even between releases.
 - The README: a quick start with `new`, by hand and in production, and every route, handler, template, escaping and option feature. `make apache` checks that its test site's `.htaccess` is the README's.
+- `notes/SPEC.md`, the design: the project layout, code style, public API, how matching, the route cache and errors work, the benchmarks, and why.
