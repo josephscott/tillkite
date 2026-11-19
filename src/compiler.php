@@ -659,7 +659,8 @@ final class Compiler {
 	}
 
 	// Joins a table's [ route index, pieces, names ] items, in route order,
-	// into one regex, and returns [ regex => leaves ].
+	// into one regex, and returns [ regex => leaves ]. When PCRE says the
+	// regex is too large, splits the list in half and tries again.
 	private function combine( array $items ) : array {
 		$regexes = [];
 		if ( $items === [] ) {
@@ -673,7 +674,24 @@ final class Compiler {
 
 		[ $ends, $leaves ] = $this->leaf_ends( $this->leaves( $tree ) );
 		$position = 0;
-		$regexes = [ '{^' . $this->render( $tree, $ends, $position ) . '}sD' => $leaves ];
+		$combined = '{^' . $this->render( $tree, $ends, $position ) . '}sD';
+
+		$error = $this->compile_error( $this->check_copy( $combined ) );
+		if ( $error === '' ) {
+			$regexes = [ $combined => $leaves ];
+			return $regexes;
+		}
+
+		if ( \count( $items ) === 1 ) {
+			$this->route_problem( $items[0][0], "the pattern doesn't compile: " . $error );
+			return $regexes;
+		}
+
+		$half = \intdiv( \count( $items ) + 1, 2 );
+		$regexes = \array_merge(
+			$this->combine( \array_slice( $items, 0, $half ) ),
+			$this->combine( \array_slice( $items, $half ) )
+		);
 		return $regexes;
 	}
 
@@ -846,6 +864,19 @@ final class Compiler {
 		}
 
 		return $error;
+	}
+
+	// PHP keeps each compiled regex in a cache, under its string. Once the
+	// routes come from the route cache, the matcher's regexes are OPcache's
+	// strings, which PHP finds in that cache by their address. If a regex had
+	// been run here first, from a string built while compiling, it would stay
+	// cached under a copy of that string, and every later match in this
+	// process would compare the whole regex with the copy. So the checks here
+	// run a copy of each regex that starts with an empty comment, (?#), which
+	// matches the same way.
+	private function check_copy( string $regex ) : string {
+		$copy = '{(?#)' . \substr( $regex, 1 );
+		return $copy;
 	}
 
 	private function route_problem( int $index, string $message ) : void {

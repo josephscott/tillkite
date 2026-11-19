@@ -88,6 +88,27 @@ describe( 'compiled tables', function() {
 		expect( array_column( $compiled['dynamic']['GET'][$regex], 'route' ) )->toBe( range( 0, Tillkite\Compiler::COUNT_LEAVES ) );
 	} );
 
+	// A long segment in each route makes a hundred of them too large for
+	// one regex, so they're split into several, which a request runs in
+	// order.
+	it( 'splits routes that are too large for one regex, and keeps their order', function() {
+		$long = str_repeat( 'abcdefghij', 40 );
+		$routes = [];
+		for ( $i = 0; $i < 100; $i++ ) {
+			$routes[] = [ 'GET', '/section' . $i . '/' . $long . '/{id:\d+}', 'page.php' ];
+		}
+
+		$dynamic = compile_routes( $routes )['dynamic']['GET'];
+		expect( count( $dynamic ) )->toBeGreaterThan( 1 );
+
+		$order = [];
+		foreach ( $dynamic as $leaves ) {
+			array_push( $order, ...array_column( $leaves, 'route' ) );
+		}
+
+		expect( $order )->toBe( range( 0, 99 ) );
+	} );
+
 	it( 'lets a last parameter that can match a / end with one when trailing_slash is true', function() {
 		$compiled = compile_routes( [ [ 'GET', '/docs/{path:.+}/', 'page.php' ] ], [ 'trailing_slash' => true ] );
 
@@ -175,6 +196,13 @@ describe( 'problems', function() {
 
 	it( 'accepts optional parts at the end, nested', function() {
 		compile_routes( [ [ 'GET', '/blog[/{year}[/{month}]]', 'page.php' ] ] );
+	} );
+
+	it( "reports a route that's too large for a regex on its own", function() {
+		$problems = route_problems( [ [ 'GET', '/' . str_repeat( 'a', 70000 ) . '/{id}', 'page.php' ] ] );
+
+		expect( $problems )->toHaveCount( 1 );
+		expect( $problems[0] )->toContain( "the pattern doesn't compile: Compilation failed: regular expression is too large" );
 	} );
 
 	it( 'reports a trailing slash when trailing_slash is false', function() {
