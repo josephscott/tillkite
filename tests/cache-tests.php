@@ -69,6 +69,48 @@ it( 'uses another file when the routes file or a setting changes', function() {
 	expect( ( new Cache( $var, $routes, 'a' ) )->read() )->toBeNull();
 } );
 
+it( 'reads nothing once a file that the routes file loaded changes or goes away, without a warning', function() {
+	[ $var, $routes ] = cache_setup();
+	$included = dirname( $routes ) . '/included.php';
+	$other = dirname( $routes ) . '/other.php';
+	file_put_contents( $included, 'a' );
+	file_put_contents( $other, 'a' );
+	$cache = new Cache( $var, $routes, '' );
+	$cache->write( [ 'includes' => $cache->stamps( [ $included, $other ], -1 ) ] );
+
+	expect( $cache->read() )->not->toBeNull();
+	file_put_contents( $included, 'ab' );
+	clearstatcache();
+	expect( $cache->read() )->toBeNull();
+
+	file_put_contents( $included, 'a' );
+	clearstatcache();
+	$cache->write( [ 'includes' => $cache->stamps( [ $included, $other ], -1 ) ] );
+	expect( $cache->read() )->not->toBeNull();
+	unlink( $other );
+	clearstatcache();
+	$warned = false;
+	set_error_handler( function() use ( &$warned ) : bool {
+		$warned = true;
+		return true;
+	} );
+	$read = $cache->read();
+	restore_error_handler();
+	expect( $read )->toBeNull();
+	expect( $warned )->toBeFalse();
+} );
+
+it( "doesn't give stamps for a file that changed too recently for OPcache to have noticed", function() {
+	[ $var, $routes ] = cache_setup();
+	$included = dirname( $routes ) . '/included.php';
+	file_put_contents( $included, 'a' );
+	$cache = new Cache( $var, $routes, '' );
+
+	expect( $cache->stamps( [], 2 ) )->toBe( [] );
+	expect( $cache->stamps( [ $included ], 2 ) )->toBeNull();
+	expect( array_keys( $cache->stamps( [ $included ], -1 ) ) )->toBe( [ $included ] );
+} );
+
 it( 'removes the older cache files of its own routes file only', function() {
 	[ $var, $routes ] = cache_setup();
 	$other = dirname( $routes ) . '/other-routes.php';

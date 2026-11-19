@@ -35,8 +35,9 @@ final class Cache {
 	}
 
 	// Returns the compiled routes, or null when the cache file isn't there
-	// yet, or its directory is open to every user or belongs to another one,
-	// where the file could be anyone's PHP, so it isn't run. That check costs a stat on every request.
+	// yet, a file that the routes file loaded has changed, or its directory is
+	// open to every user or belongs to another one, where the file could be
+	// anyone's PHP, so it isn't run. That check costs a stat on every request.
 	// include warns about a missing file, so a temporary handler takes the
 	// warning, and checking for the file first would cost another stat.
 	public function read() : ?array {
@@ -48,11 +49,40 @@ final class Cache {
 		\set_error_handler( static fn () : bool => true );
 		$compiled = include $this->file;
 		\restore_error_handler();
-		if ( ! \is_array( $compiled ) ) {
+		if ( ! \is_array( $compiled ) || ( ! empty( $compiled['includes'] ) && $this->changed( $compiled['includes'] ) ) ) {
 			$compiled = null;
 		}
 
 		return $compiled;
+	}
+
+	/**
+	 * Returns what read() checks for each of the files that the routes file
+	 * loaded, by path, or null when one has changed too recently to cache what
+	 * came from it. OPcache may have given the routes file its old copy, for
+	 * up to $wait seconds, its opcache.revalidate_freq, and caching that under
+	 * the new file's stamp would keep the old routes until the next change.
+	 */
+	public function stamps( array $files, int $wait ) : ?array {
+		$stamps = [];
+		$now = \time();
+		foreach ( $files as $file ) {
+			if ( $now - \max( (int) \filemtime( $file ), (int) \filectime( $file ) ) <= $wait ) {
+				$stamps = null;
+				return $stamps;
+			}
+
+			$stamps[$file] = $this->stamp( $file );
+		}
+
+		return $stamps;
+	}
+
+	// Removes the routes file from OPcache before it's compiled. OPcache may
+	// not have noticed the change yet, and the routes it has would be cached
+	// under the new file's name.
+	public function clear_routes() : void {
+		$this->forget( $this->routes );
 	}
 
 	/**
@@ -89,8 +119,10 @@ final class Cache {
 		$php = $this->header() . 'return ' . \var_export( $compiled, true ) . ";\n";
 		$written = \file_put_contents( $temp, $php ) !== false && \chmod( $temp, 0o644 ) && \touch( $temp, \time() - 60 ) && \rename( $temp, $this->file );
 		if ( $written ) {
-			// Another request may be removing the same files, so warnings from
-			// here don't matter.
+			// A changed file that the routes file loaded gives the cache file the
+			// same name, and OPcache may have its old copy. Another request may
+			// be removing the same files, so warnings from here don't matter.
+			$this->forget( $this->file );
 			$this->remove_older();
 			$error = '';
 		} else {
@@ -105,6 +137,36 @@ final class Cache {
 
 		\restore_error_handler();
 		return $error;
+	}
+
+	// Whether any of the files that the routes file loaded has changed, or is
+	// gone. Each one that has comes out of OPcache, which may not have noticed,
+	// and never notices an edit that keeps the modification time. The file may
+	// be anything, so one that's gone has to be checked for, or filemtime()
+	// would warn.
+	private function changed( array $stamps ) : bool {
+		$changed = false;
+		foreach ( $stamps as $file => $stamp ) {
+			if ( ! \is_file( $file ) || $this->stamp( $file ) !== $stamp ) {
+				$this->forget( $file );
+				$changed = true;
+			}
+		}
+
+		return $changed;
+	}
+
+	// Stats a file once. PHP's stat cache answers the other two.
+	private function stamp( string $file ) : string {
+		$stamp = \filemtime( $file ) . ' ' . \filectime( $file ) . ' ' . \filesize( $file );
+		return $stamp;
+	}
+
+	// Removes a file from OPcache, so the next include reads it from disk.
+	private function forget( string $file ) : void {
+		if ( \function_exists( 'opcache_invalidate' ) ) {
+			\opcache_invalidate( $file, true );
+		}
 	}
 
 	// Why a file in the cache directory could be someone else's PHP, with the
