@@ -21,6 +21,14 @@ final class Matcher {
 	 * - [ 'status' => 308, 'path' => '/users' ]
 	 * - [ 'status' => 404 ]
 	 * - [ 'status' => 500, 'error' => 'Backtrack limit exhausted' ]
+	 *
+	 * A 404, 405 or 308 for a path under a group's prefix also has 'group',
+	 * the group's key in groups, and 'params', its prefix's parameters, like
+	 * [ 'status' => 404, 'group' => 0, 'params' => [ 'id' => '42' ] ].
+	 *
+	 * The usual cases, a static or dynamic route that matches, are written out
+	 * here instead of calling find(), because every function call costs time.
+	 * find_dynamic() is the same code.
 	 */
 	public function match( string $method, string $path ) : array {
 		$result = $this->compiled['static'][$method][$path] ?? null;
@@ -59,6 +67,9 @@ final class Matcher {
 				$result['params'] = $params;
 				if ( \strpbrk( $path, '%\\' ) !== false || \str_contains( $path, '..' ) ) {
 					$result = $this->decode( $result );
+					if ( $result['status'] === 404 && $this->compiled['prefixes'] !== '' ) {
+						$result = $this->group( $result, $path );
+					}
 				}
 
 				return $result;
@@ -70,7 +81,13 @@ final class Matcher {
 			}
 		}
 
+		// Only a miss looks for the group it's under, so a match costs
+		// nothing more.
 		$result = $this->miss( $table, $path );
+		if ( $result['status'] !== 500 && $this->compiled['prefixes'] !== '' ) {
+			$result = $this->group( $result, $path );
+		}
+
 		return $result;
 	}
 
@@ -170,6 +187,41 @@ final class Matcher {
 		}
 
 		$result = [ 'status' => 200, 'params' => $params ];
+		return $result;
+	}
+
+	// Adds the group whose prefix the path is under, if there is one, to a
+	// miss. When the regex fails, the miss is a 500, so a group's
+	// before-files are never skipped. A prefix whose parameter fails its
+	// check isn't one the path is under, as if the value weren't encoded.
+	private function group( array $result, string $path ) : array {
+		$matched = \preg_match( $this->compiled['prefixes'], $path, $matches );
+		if ( $matched === false ) {
+			$result = [ 'status' => 500, 'error' => \preg_last_error_msg() ];
+			return $result;
+		}
+
+		if ( $matched === 0 ) {
+			return $result;
+		}
+
+		$key = (int) $matches['MARK'];
+		$params = [];
+		foreach ( $this->compiled['groups'][$key]['names'] as $i => $name ) {
+			$params[$name] = $matches[$i + 1];
+		}
+
+		$decoded = $this->decoded( $params, $this->compiled['groups'][$key]['checks'] );
+		if ( $decoded['status'] === 500 ) {
+			return $decoded;
+		}
+
+		if ( $decoded['status'] === 404 ) {
+			return $result;
+		}
+
+		$result['group'] = $key;
+		$result['params'] = $decoded['params'];
 		return $result;
 	}
 

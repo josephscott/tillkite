@@ -508,18 +508,53 @@ describe( 'groups', function() {
 	] );
 
 	// Each route in a group has its group's key in groups, where the group
-	// keeps its prefix and error files.
-	it( 'keeps each group, with its prefix and error files', function() {
+	// keeps its prefix and error files. A miss has the key of the group
+	// whose prefix it's under, the one with the most segments when it's
+	// under more than one, even when that one comes later, as /api/v2 comes
+	// after /api, and that prefix's parameters.
+	it( 'keeps each group, and finds the group a miss is under', function() {
 		$compiled = compile_routes( [
 			[ 'GET', '/', 'page.php' ],
 			[ 'prefix' => '/api', 'errors' => [ 404 => '404.php' ], 'routes' => [ [ 'GET', '/status', 'page.php' ] ] ],
 			[ 'prefix' => '/plain', 'routes' => [ [ 'GET', '', 'page.php' ] ] ],
+			[ 'prefix' => '/users/{id:\d+}', 'errors' => [ 404 => '405.php' ], 'routes' => [ [ 'GET', '', 'page.php' ] ] ],
+			[ 'prefix' => '/api/v2', 'errors' => [ 405 => '405.php' ], 'routes' => [ [ 'GET', '/status', 'page.php' ] ] ],
 		] );
 
 		expect( array_map( fn ( array $group ) => [ $group['prefix'], $group['errors'] ], $compiled['groups'] ) )->toBe( [
 			[ '/api', [ 404 => '404.php' ] ],
 			[ '/plain', [] ],
+			[ '/users/{id:\d+}', [ 404 => '405.php' ] ],
+			[ '/api/v2', [ 405 => '405.php' ] ],
 		] );
-		expect( array_map( fn ( array $files ) => $files[4], $compiled['files'] ) )->toBe( [ 1 => 0, 2 => 1 ] );
+		expect( array_map( fn ( array $files ) => $files[4], $compiled['files'] ) )->toBe( [ 1 => 0, 2 => 1, 3 => 2, 4 => 3 ] );
+
+		$matcher = new Tillkite\Matcher( $compiled );
+		$groups = [];
+		foreach ( [ '/api', '/api/nope', '/api/v2/nope', '/api/status', '/apix', '/plain/nope', '/users/5/nope', '/users/ada/nope' ] as $path ) {
+			$result = $matcher->match( 'GET', $path );
+			$groups[$path] = isset( $result['group'] ) ? [ $result['group'], $result['params'] ] : null;
+		}
+
+		expect( $groups )->toBe( [
+			'/api' => [ 0, [] ],
+			'/api/nope' => [ 0, [] ],
+			'/api/v2/nope' => [ 3, [] ],
+			'/api/status' => null,
+			'/apix' => null,
+			'/plain/nope' => [ 1, [] ],
+			'/users/5/nope' => [ 2, [ 'id' => '5' ] ],
+			'/users/ada/nope' => null,
+		] );
+	} );
+
+	// Prefixes with as many segments keep the order of the list.
+	it( 'gives a miss under prefixes with as many segments to the first in the list', function() {
+		$lang = [ 'prefix' => '/{lang}', 'routes' => [ [ 'GET', '/about', 'page.php' ] ] ];
+		$en = [ 'prefix' => '/en', 'routes' => [ [ 'GET', '/home', 'page.php' ] ] ];
+		$first = ( new Tillkite\Matcher( compile_routes( [ $lang, $en ] ) ) )->match( 'GET', '/en/nope' );
+		$second = ( new Tillkite\Matcher( compile_routes( [ $en, $lang ] ) ) )->match( 'GET', '/en/nope' );
+		expect( [ $first['group'], $first['params'] ] )->toBe( [ 0, [ 'lang' => 'en' ] ] );
+		expect( [ $second['group'], $second['params'] ] )->toBe( [ 0, [] ] );
 	} );
 } );

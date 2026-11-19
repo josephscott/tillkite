@@ -119,6 +119,11 @@ class App {
 	// The matched route, as route() returns it.
 	private ?array $route = null;
 
+	// The matched route's group, or the group whose prefix an unmatched path
+	// is under, as Compiler::compile() returns it in groups. Its error files
+	// take the place of the app's for the codes they have.
+	private ?array $group = null;
+
 	// The request's URI and method, as uri() and method() return them, read
 	// when run() or they first need them.
 	private ?string $uri = null;
@@ -217,14 +222,18 @@ class App {
 	}
 
 	// Matches the request and runs the route's before-files and handler.
-	// When matching fails, the response is a 500. A miss runs the app's
-	// before-file too, and only then gets its response, so a before-file
+	// When matching fails, the response is a 500. A miss runs the
+	// before-files too, and only then gets its response, so a before-file
 	// that checks a login hides which paths exist.
 	private function respond( array $compiled, string $method, string $path, string $query ) : void {
 		$result = $this->match( $compiled, $method, $path );
 		if ( $result['status'] === 200 ) {
 			$this->route = $compiled['routes'][$result['route']];
 			$files = $compiled['files'][$result['route']] ?? $compiled['default_files'];
+			if ( $files[4] !== null ) {
+				$this->group = $compiled['groups'][$files[4]];
+			}
+
 			$this->run_route( $this->route[2], $files, $result['params'] );
 			return;
 		}
@@ -235,13 +244,20 @@ class App {
 			return;
 		}
 
-		// A miss runs what a route with no options of its own would.
+		// A miss runs what a route in its group with no options of its own
+		// would, or the app's before-file.
 		$files = $compiled['default_files'];
-		if ( $files[0] !== '' && ! $this->run_miss_before( $files ) ) {
+		if ( isset( $result['group'] ) ) {
+			$this->group = $compiled['groups'][$result['group']];
+			$files = $this->group['files'];
+		}
+
+		$params = $result['params'] ?? [];
+		if ( $files[0] !== '' && ! $this->run_miss_before( $files, $params ) ) {
 			return;
 		}
 
-		$this->miss( $result, $query );
+		$this->miss( $result, $params, $query );
 	}
 
 	// Removes base from the path, then matches the path. With base set, the
@@ -275,8 +291,8 @@ class App {
 	}
 
 	// Runs a route's before-files and handler. Compiler has worked out the
-	// before-files, up to three, and the buffer option. See
-	// Compiler::compile().
+	// before-files, up to three: the app's, its group's and its own, and the
+	// buffer option. See Compiler::compile().
 	private function run_route( string $handler, array $files, array $params ) : void {
 		$this->start( $files[3] ?? $this->buffer, $params );
 		$next = $this->next_file( ... );
@@ -301,12 +317,12 @@ class App {
 	// Returns true when they all ran. When one returned false or set a
 	// redirect or error status, what they printed is sent instead, and when
 	// one called error(), its page is.
-	private function run_miss_before( array $files ) : bool {
-		$this->start( true, [] );
+	private function run_miss_before( array $files, array $params ) : bool {
+		$this->start( true, $params );
 		$this->timer->next( 'before' );
 		$ran = false;
 		$this->in_route_files = true;
-		Runner::files( $this, [], $files[0], $files[1], $files[2], '', function( string $step ) use ( &$ran ) : bool {
+		Runner::files( $this, $params, $files[0], $files[1], $files[2], '', function( string $step ) use ( &$ran ) : bool {
 			if ( $step === 'handler' ) {
 				$ran = \http_response_code() < 300;
 				return false;
@@ -336,7 +352,7 @@ class App {
 	// request, so anything in them that isn't printable ASCII, which a web
 	// server may pass on, is percent-encoded, and the header holds only what
 	// a URL can. A tab, which browsers drop, can't make /<tab>/ into //.
-	private function miss( array $result, string $query ) : void {
+	private function miss( array $result, array $params, string $query ) : void {
 		$status = $result['status'];
 		if ( $status === 308 ) {
 			$location = $this->base . $result['path'];
@@ -353,14 +369,15 @@ class App {
 			\header( 'Allow: ' . \implode( ', ', $result['allow'] ) );
 		}
 
-		$this->run_error( $code, [] );
+		$this->run_error( $code, $params );
 	}
 
 	// Runs the error file for a 4xx code, in a scope of its own, or sends
-	// plain text. The 404 and 405 files run here when no route matches, and
-	// any 4xx file runs here for error(), with the route's parameters.
+	// plain text. The 404 and 405 files run here when no route matches, with
+	// the parameters of the prefix the path is under, and any 4xx file runs
+	// here for error(), with the route's parameters.
 	private function run_error( int $code, array $params ) : void {
-		$file = $this->errors[$code] ?? '';
+		$file = $this->group['errors'][$code] ?? $this->errors[$code] ?? '';
 		if ( $file === '' ) {
 			$this->plain( $code );
 			return;
@@ -439,7 +456,7 @@ class App {
 			\ob_start();
 		}
 
-		if ( isset( $this->errors[500] ) ) {
+		if ( isset( $this->group['errors'][500] ) || isset( $this->errors[500] ) ) {
 			\set_exception_handler( $this->run_500( ... ) );
 		}
 	}
@@ -461,14 +478,14 @@ class App {
 		// before it runs.
 		$this->timer->next( 'error' );
 		$this->send_timing();
-		Runner::error_file( $this, $this->params, $error, $this->handlers . '/' . $this->errors[500] );
+		Runner::error_file( $this, $this->params, $error, $this->handlers . '/' . ( $this->group['errors'][500] ?? $this->errors[500] ) );
 	}
 
 	// A 500 that isn't an uncaught exception: the 500 file gets an exception
 	// that describes it, which Tillkite creates but never throws. With a
 	// broken configuration, the 500 file runs only if it's there to run.
 	private function server_error( string $message ) : void {
-		$file = $this->errors[500] ?? null;
+		$file = $this->group['errors'][500] ?? $this->errors[500] ?? null;
 		if ( \is_string( $file ) && $file !== '' && $this->is_absolute( $this->handlers ) && \is_file( $this->handlers . '/' . $file ) ) {
 			$this->run_500( new \RuntimeException( $message ) );
 			return;
@@ -527,11 +544,19 @@ class App {
 		return $value;
 	}
 
-	// Returns the matched route as written in the routes file, or null if
-	// nothing matched.
+	// Returns the matched route as written in the routes file, with its
+	// group's prefix joined to its pattern, or null if nothing matched.
 	public function route() : ?array {
 		$route = $this->route;
 		return $route;
+	}
+
+	// Returns the prefix of the matched route's group, as written in the
+	// routes file, like '/admin', or null if it isn't in one. When no route
+	// matched, it's the prefix of the group the path is under.
+	public function group() : ?string {
+		$prefix = $this->group['prefix'] ?? null;
+		return $prefix;
 	}
 
 	// Returns the milliseconds for each step that ran. A step that's still

@@ -86,8 +86,42 @@ describe( 'routing', function() {
 		expect( request( 'DELETE', '/anything?a=1' )['body'] )->toBe( 'DELETE /anything?a=1' );
 	} );
 
-	it( 'returns the matched route from route(), as written', function() {
+	it( "returns the matched route from route(), as written but with its group's prefix", function() {
 		expect( request( 'GET', '/route/x' )['body'] )->toBe( '["GET","\\/route\\/{name}","route.php"]' );
+		expect( request( 'GET', '/group/route/x' )['body'] )->toBe( '["GET","\\/group\\/route\\/{name}","route.php"]' );
+	} );
+
+	// /groups starts with /group, but isn't in that group. /teams/{team}'s
+	// before-file calls error( 403 ).
+	it( 'returns the prefix of the group a route is in, or that a path no route matches is under, from group()', function( string $target, string $body ) {
+		$response = request( 'GET', $target, [ 'errors' => [ 403 => 'group.php', 404 => 'group.php' ] ] );
+
+		expect( $response['body'] )->toBe( $body );
+	} )->with( [
+		'a route in a group' => [ '/group/prefix', '"\\/group"' ],
+		'a route outside a group' => [ '/groups', 'null' ],
+		'a miss under a prefix' => [ '/group/nope', '"\\/group"' ],
+		'a miss under no prefix' => [ '/nope', 'null' ],
+		'a prefix with a parameter, as written' => [ '/teams/ada/nope', '"\\/teams\\/{team}"' ],
+	] );
+
+	// /group-error's and /teams/{team}'s before-file calls error( 403 ), and
+	// /denied-group's sends a 401 of its own and returns false.
+	it( "sends what a miss's before-file under a prefix stops it with, in place of the 404", function( string $target, int $status, string $body ) {
+		$response = request( 'GET', $target, [ 'before' => 'before.php', 'errors' => [ 403 => '403.php' ] ] );
+
+		expect( [ $response['status'], $response['body'] ] )->toBe( [ $status, $body ] );
+	} )->with( [
+		'error()' => [ '/group-error/nope', 403, 'the 403 page [["tillkite","params"],[]]' ],
+		'error() under a prefix with a parameter, which the files get' => [ '/teams/a%20b/nope', 403, 'the 403 page [["tillkite","params"],{"team":"a b"}]' ],
+		'a before-file that returns false' => [ '/denied-group/nope', 401, 'denied' ],
+	] );
+
+	it( "doesn't run a miss's later before-file after one that redirects", function() {
+		$response = request( 'GET', '/after/nope', [ 'before' => 'redirect-before.php' ] );
+
+		expect( $response['status'] )->toBe( 302 );
+		expect( $response['headers'] )->not->toHaveKey( 'x-route-before' );
 	} );
 
 	it( 'sends a plain-text 404 and 405 when there are no error files', function() {
@@ -137,6 +171,7 @@ describe( 'routing', function() {
 	} )->with( [
 		"the app's" => [ '/scope', [ 'before' => 'before.php' ], [ 'from_before' ] ],
 		"the app's, then the route's" => [ '/scope/own-before', [ 'before' => 'before.php' ], [ 'from_before', 'from_route_before' ] ],
+		"the app's, the group's, then the route's" => [ '/group/own-before', [ 'before' => 'before.php' ], [ 'from_before', 'from_group_before', 'from_route_before' ] ],
 		"the route's, with none for the app" => [ '/scope/own-before', [], [ 'from_route_before' ] ],
 		"only the route's, with before_only" => [ '/scope/only-before', [ 'before' => 'before.php' ], [ 'from_route_before' ] ],
 		"none, with 'before' => false" => [ '/scope/no-before', [ 'before' => 'before.php' ], [] ],
@@ -213,15 +248,31 @@ describe( 'error()', function() {
 		'plain text' => [ '/error/410', [], 410, "410 Gone\n" ],
 	] );
 
-	// error-before.php calls it without returning its false.
-	it( "stops at a before-file that calls it, even when it doesn't return false", function( string $method, string $target ) {
-		$response = request( $method, $target, [ 'before' => 'error-before.php' ] );
+	// The group's before-file calls it without returning its false, and the
+	// route's own comes after. A POST is a miss, which would be a 405.
+	it( "stops the files after a before-file that calls it, even when it doesn't return false", function( string $method, array $options ) {
+		$response = request( $method, '/group-error', $options );
 
 		expect( [ $response['status'], $response['body'] ] )->toBe( [ 403, "403 Forbidden\n" ] );
+		expect( $response['headers'] )->not->toHaveKey( 'x-route-before' );
 		expect( $response['headers'] )->not->toHaveKey( 'allow' );
 	} )->with( [
-		'a route' => [ 'GET', '/' ],
-		'a miss' => [ 'POST', '/' ],
+		'the first before-file' => [ 'GET', [] ],
+		"the second, after the app's" => [ 'GET', [ 'before' => 'before.php' ] ],
+		'a miss' => [ 'POST', [] ],
+	] );
+
+	// The app has a 403 file and no 500 file. The group has 404, 405 and 500
+	// files.
+	it( "runs a group's error file for its routes and the paths under its prefix, and the app's for the codes it doesn't have", function( string $path, int $status, string $body ) {
+		$response = request( 'GET', $path, [ 'errors' => [ 403 => '403.php' ] ] );
+
+		expect( [ $response['status'], $response['body'] ] )->toBe( [ $status, $body ] );
+	} )->with( [
+		'error()' => [ '/group-errors/error/404', 404, "the group's 404 page" ],
+		"error() for a code only the app's has" => [ '/group-errors/error/403', 403, 'the 403 page [["tillkite","params"],{"code":"403"}]' ],
+		'an exception' => [ '/group-errors/throws/1', 500, "the group's 500 page" ],
+		'a 404 under the prefix' => [ '/group-errors/nope', 404, "the group's 404 page" ],
 	] );
 
 	it( "sends a 500 for a code it doesn't take, and logs it", function() {
