@@ -57,6 +57,13 @@ describe( 'configuration problems', function() {
 				. ' [["tillkite","params","error"],[]]',
 			'',
 		],
+		"a problem with the site's setup, which the 500 file doesn't get" => [
+			[ 'errors' => [ 500 => '500.php' ], 'cache' => '/nowhere' ],
+			"500 Internal Server Error\n\nThis site isn't set up safely, so Tillkite won't run it:\n\n"
+				. "- The cache directory doesn't exist, so the routes would be compiled on every request. Make it, writable only by the user PHP runs as, or leave the cache option out.\n\n"
+				. "The error log has the details.\n",
+			"Tillkite: The cache directory doesn't exist, so the routes would be compiled on every request. Make it, writable only by the user PHP runs as, or leave the cache option out: /nowhere\n",
+		],
 	] );
 } );
 
@@ -318,4 +325,14 @@ describe( 'the route cache', function() {
 		expect( request( 'GET', '/', [ 'routes' => SITE . '/problem-routes.php', 'cache' => $dir ] )['status'] )->toBe( 500 );
 		expect( scandir( $dir ) )->toBe( [ '.', '..' ] );
 	} );
+
+	it( "reports a cache directory PHP can't write to as a problem with the site's setup", function() {
+		$dir = temp_dir();
+		chmod( $dir, 0o555 );
+		$response = request( 'GET', '/', [ 'cache' => $dir ] );
+		chmod( $dir, 0o755 );
+
+		expect( $response['status'] )->toBe( 500 );
+		expect( $response['body'] )->toContain( "- The user PHP runs as can't write to the cache directory, so the routes would be compiled on every request. Make it writable by that user, or leave the cache option out: " . $dir . "\n" );
+	} )->skip( function_exists( 'posix_geteuid' ) && posix_geteuid() === 0, 'root can write to any directory' );
 } );

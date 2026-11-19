@@ -197,6 +197,39 @@ final class Cache {
 	}
 
 	/**
+	 * Why the cache can't be used in its directory, and what to do about it,
+	 * without the directory's path, or '' when it can. Each of these would
+	 * have the routes compiled on every request, which takes milliseconds for
+	 * a site with a few hundred routes, so App reports it as a problem with
+	 * the site's setup, instead of a line in the log on every request that
+	 * nobody may read: a directory that doesn't exist, one that belongs to a
+	 * user it doesn't trust, which read() and write() don't use, and one the
+	 * user PHP runs as can't write to.
+	 *
+	 * A directory that every user can write to isn't one of them, though
+	 * read() and write() don't use it either: on Windows, PHP reports every
+	 * directory that way, and it would stop every site with a cache there.
+	 *
+	 * App calls it only when it compiles the routes, so a site with a cache
+	 * pays nothing for it. A write that fails for another reason, like a full
+	 * disk, is still only logged, so the site goes on working.
+	 */
+	public function setup_problem() : string {
+		$problem = '';
+		if ( ! \is_dir( $this->directory ) ) {
+			$problem = "The cache directory doesn't exist, so the routes would be compiled on every request. Make it, writable only by the user PHP runs as, or leave the cache option out";
+			return $problem;
+		}
+
+		$problem = $this->owner_problem();
+		if ( $problem === '' && ! \is_writable( $this->directory ) ) {
+			$problem = "The user PHP runs as can't write to the cache directory, so the routes would be compiled on every request. Make it writable by that user, or leave the cache option out";
+		}
+
+		return $problem;
+	}
+
+	/**
 	 * Why the cache directory's owner could have put PHP in it for the web
 	 * server to run, and what to do about it, without the directory's path,
 	 * or '' when the owner is one to trust: root, the user PHP runs as, or
@@ -208,8 +241,8 @@ final class Cache {
 	 *
 	 * Without the posix extension there's no telling which user PHP runs as,
 	 * so only root and the routes file's owner pass, and the problem says
-	 * so. On Windows, the owner is always 0. directory_problem() has checked
-	 * that the directory is there.
+	 * so. On Windows, the owner is always 0. Both callers have checked that
+	 * the directory is there.
 	 *
 	 * read() and write() don't use such a directory.
 	 */

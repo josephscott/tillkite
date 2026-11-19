@@ -98,6 +98,11 @@ class App {
 
 	private array $problems = [];
 
+	// The problems with how the site is set up on its server, like a cache
+	// directory that doesn't exist, each described without its paths, for the
+	// page that report_problems() sends in place of the site's own.
+	private array $setup = [];
+
 	// The parameters of the files that are running, for the error files.
 	private array $params = [];
 
@@ -500,6 +505,13 @@ class App {
 			}
 
 			$cache->clear_routes();
+
+			// A directory the cache can't be used in would have the routes
+			// compiled on every request.
+			$problem = $cache->setup_problem();
+			if ( $problem !== '' ) {
+				$this->setup_problem( $problem, $this->cache );
+			}
 		}
 
 		// With a cache, the files that the routes file loads are noted, so a
@@ -586,9 +598,24 @@ class App {
 		return $absolute;
 	}
 
+	// Adds a problem with how the site is set up on its server. The
+	// description says what's wrong and what to do about it, without a
+	// path, and $detail has the paths, for the developer.
+	private function setup_problem( string $description, string $detail ) : void {
+		$this->problems[] = $description . ': ' . $detail;
+		$this->setup[] = $description;
+	}
+
 	// Under php -S, the response lists the problems, for the developer.
-	// Anywhere else, they go to the error log, and the response is the 500
-	// file's page, or a plain 500, without them.
+	// Anywhere else, they go to the error log, and the 500 file gets them in
+	// $error.
+	//
+	// A problem with the site's setup is one that whoever put the site on its
+	// server has to fix before it's safe to run, and may meet before they
+	// know where its error log is. So anywhere else, the response describes
+	// each of those, and the site's 500 file, whose page is for visitors,
+	// doesn't run. Every visitor gets that page until it's fixed, so it has
+	// no paths, which stay in the error log.
 	private function report_problems() : void {
 		$message = "Tillkite found problems with its configuration:\n\n- " . \implode( "\n- ", $this->problems ) . "\n";
 		if ( \PHP_SAPI === 'cli-server' ) {
@@ -598,6 +625,11 @@ class App {
 
 		foreach ( $this->problems as $problem ) {
 			\error_log( 'Tillkite: ' . Escape::log( $problem ) );
+		}
+
+		if ( $this->setup !== [] ) {
+			$this->plain( 500, "500 Internal Server Error\n\nThis site isn't set up safely, so Tillkite won't run it:\n\n- " . \implode( ".\n- ", $this->setup ) . ".\n\nThe error log has the details.\n" );
+			return;
 		}
 
 		$this->server_error( $message );
