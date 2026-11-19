@@ -61,12 +61,43 @@ describe( 'routing', function() {
 		expect( request( 'GET', '/scope' )['body'] )->toBe( '{"vars":["tillkite","params"],"private":false}' );
 	} );
 
-	it( 'sends a plain 404 when nothing matches, after the before-file', function() {
-		$response = request( 'GET', '/nowhere', [ 'before' => 'before.php' ] );
+	it( 'sends a plain-text 404 and 405 when there are no error files', function() {
+		$missing = request( 'GET', '/nope' );
+		$wrong_method = request( 'POST', '/users/5' );
 
-		expect( $response['status'] )->toBe( 404 );
-		expect( $response['headers']['x-before'] )->toBe( 'ran' );
-		expect( $response['body'] )->toBe( "404 Not Found\n" );
+		expect( [ $missing['status'], $missing['body'] ] )->toBe( [ 404, "404 Not Found\n" ] );
+		expect( [ $wrong_method['status'], $wrong_method['body'] ] )->toBe( [ 405, "405 Method Not Allowed\n" ] );
+		expect( $wrong_method['headers']['allow'] )->toBe( 'GET, HEAD' );
+	} );
+
+	it( 'runs the before-file, then the 404 or 405 file or the 308 redirect', function() {
+		$options = [ 'errors' => [ 404 => '404.php', 405 => '405.php' ], 'before' => 'before.php' ];
+		$missing = request( 'GET', '/nope', $options );
+		$wrong_method = request( 'POST', '/users/5', $options );
+		$redirect = request( 'GET', '/users/5/', $options );
+
+		expect( [ $missing['status'], $missing['body'] ] )->toBe( [ 404, 'the 404 page' ] );
+		expect( [ $wrong_method['status'], $wrong_method['body'] ] )->toBe( [ 405, 'the 405 page' ] );
+		expect( $wrong_method['headers']['allow'] )->toBe( 'GET, HEAD' );
+		expect( $redirect['status'] )->toBe( 308 );
+		expect( [ $missing['headers']['x-before'], $wrong_method['headers']['x-before'], $redirect['headers']['x-before'] ] )->toBe( [ 'ran', 'ran', 'ran' ] );
+	} );
+
+	it( 'redirects to the other trailing slash form, keeping the query string', function() {
+		$response = request( 'GET', '/users/5/?tab=posts' );
+
+		expect( $response['status'] )->toBe( 308 );
+		expect( $response['headers']['location'] )->toBe( '/users/5?tab=posts' );
+	} );
+
+	// With a catch-all, //example.com/ would redirect to //example.com, which
+	// a browser reads as a link to another site, and so would /\example.com/.
+	it( "doesn't redirect to a path that would leave the site", function() {
+		$options = [ 'routes' => SITE . '/catch-all-routes.php' ];
+
+		expect( request( 'GET', '/docs/', $options )['headers']['location'] )->toBe( '/docs' );
+		expect( request( 'GET', '//example.com/', $options )['status'] )->toBe( 404 );
+		expect( request( 'GET', '/\\example.com/', $options )['status'] )->toBe( 404 );
 	} );
 
 	it( "runs the before-file in the handler's scope", function() {

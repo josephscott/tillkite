@@ -126,20 +126,22 @@ class App {
 		}
 
 		$path = self::server( 'REQUEST_URI' ) ?? '/';
+		$query = '';
 		$mark = \strpos( $path, '?' );
 		if ( $mark !== false ) {
+			$query = \substr( $path, $mark );
 			$path = \substr( $path, 0, $mark );
 		}
 
-		$this->respond( $compiled, self::server( 'REQUEST_METHOD' ) ?? 'GET', $path );
+		$this->respond( $compiled, self::server( 'REQUEST_METHOD' ) ?? 'GET', $path, $query );
 		return true;
 	}
 
 	// Matches the request and runs the before-file and the route's handler.
-	// When matching fails, the response is a 500. Anything else that doesn't
-	// match runs the before-file too, and then gets a 404, so a before-file
-	// that checks a login hides which paths exist.
-	private function respond( array $compiled, string $method, string $path ) : void {
+	// When matching fails, the response is a 500. A miss runs the before-file
+	// too, and only then gets its response, so a before-file that checks a
+	// login hides which paths exist.
+	private function respond( array $compiled, string $method, string $path, string $query ) : void {
 		$before = '';
 		if ( $this->before !== '' ) {
 			$before = $this->handlers . '/' . $this->before;
@@ -159,8 +161,47 @@ class App {
 		}
 
 		if ( Runner::files( $this, [], $before, '' ) ) {
-			$this->plain( 404 );
+			$this->miss( $result, $query );
 		}
+	}
+
+	// The response when no route matches: a 308 redirect, or the 404 or 405
+	// page. A Location that starts with // or /\ would go to another site, so
+	// that request gets a 404 instead. The path and query come from the
+	// request, so anything in them that isn't printable ASCII, which a web
+	// server may pass on, is percent-encoded, and the header holds only what
+	// a URL can. A tab, which browsers drop, can't make /<tab>/ into //.
+	private function miss( array $result, string $query ) : void {
+		$status = $result['status'];
+		if ( $status === 308 ) {
+			$location = $result['path'];
+			if ( ! \str_starts_with( $location, '//' ) && ! \str_starts_with( $location, '/\\' ) ) {
+				\http_response_code( 308 );
+				\header( 'Location: ' . \preg_replace_callback( '/[^\x21-\x7E]/', static fn ( array $byte ) : string => \rawurlencode( $byte[0] ), $location . $query ) );
+				return;
+			}
+		}
+
+		$code = 404;
+		if ( $status === 405 ) {
+			$code = 405;
+			\header( 'Allow: ' . \implode( ', ', $result['allow'] ) );
+		}
+
+		$this->run_error( $code );
+	}
+
+	// Runs the error file for a 4xx code, in a scope of its own, or sends
+	// plain text.
+	private function run_error( int $code ) : void {
+		$file = $this->errors[$code] ?? '';
+		if ( $file === '' ) {
+			$this->plain( $code );
+			return;
+		}
+
+		\http_response_code( $code );
+		Runner::files( $this, [], '', $this->handlers . '/' . $file );
 	}
 
 	// Returns the request's value for a name in $_SERVER, like REQUEST_URI,
