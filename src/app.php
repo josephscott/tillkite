@@ -99,12 +99,12 @@ class App {
 	];
 
 	// Tillkite's version. A release sets it.
-	private const string VERSION = '0.0.0';
+	private const string VERSION = '0.1.0';
 
 	// A hash of every file in src/, which make dist writes. It's part of the
 	// route cache's key, so code that compiles the routes differently, even
 	// between releases, never reads a cache that older code wrote.
-	private const string SOURCE_HASH = 'b8b1803f0ebd98801c8935c8c135c3c7';
+	private const string SOURCE_HASH = 'e47948518f7687e4a34778b3bbb2df9f';
 
 	// The errors that end a request without an exception, such as running
 	// out of memory or time, or an uncaught exception with no 500 file.

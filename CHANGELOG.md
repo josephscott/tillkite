@@ -4,6 +4,8 @@ All notable changes to Tillkite are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-19
+
 ### Added
 
 - The Composer package, `josephscott/tillkite`, MIT licensed, for PHP 8.4 and later.
