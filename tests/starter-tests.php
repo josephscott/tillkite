@@ -11,12 +11,16 @@ test( 'vendor/bin/tillkite new makes a site that answers its routes', function()
 	expect( [ fileperms( $dir . '/my-site/var' ) & 0o777, fileperms( $dir . '/my-site/handlers/home.php' ) & 0o777 ] )->toBe( [ 0o775, 0o664 ] );
 	expect( $made['output'] )->toContain( "  cd my-site\n  php -S localhost:8000 -t public public/index.php\n" );
 
-	// A route whose handler throws, for the 500 page.
+	// A route whose handler throws, for the 500 page, and one that shows PHP's
+	// settings, which php -S leaves as they are, for the developer.
 	$site = $dir . '/my-site';
-	file_put_contents( $site . '/routes.php', str_replace( "'hello.php' ],", "'hello.php' ],\n\t[ 'GET', '/boom', 'boom.php' ],", (string) file_get_contents( $site . '/routes.php' ) ) );
+	file_put_contents( $site . '/routes.php', str_replace( "'hello.php' ],", "'hello.php' ],\n\t[ 'GET', '/boom', 'boom.php' ],\n\t[ 'GET', '/settings', 'settings.php' ],", (string) file_get_contents( $site . '/routes.php' ) ) );
 	file_put_contents( $site . '/handlers/boom.php', "<?php throw new LogicException( 'Boom' );\n" );
+	file_put_contents( $site . '/handlers/settings.php', "<?php echo (int) ini_get( 'display_errors' ), ' ', (int) ini_get( 'session.cookie_secure' );\n" );
 
-	$port = serve( $site . '/public' )['port'];
+	$port = serve( $site . '/public', true, true )['port'];
+	expect( http( $port, 'GET', '/settings' )['body'] )->toBe( '1 0' );
+
 	$home = http( $port, 'GET', '/' );
 	expect( $home['status'] )->toBe( 200 );
 	expect( $home['body'] )->toContain( '<title>It works</title>' );
