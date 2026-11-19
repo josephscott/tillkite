@@ -1,0 +1,12 @@
+{
+	"name": "josephscott/tillkite",
+	"description": "A small, fast PHP router that maps URLs to PHP files.",
+	"type": "library",
+	"license": "MIT",
+	"require": {
+		"php": ">=8.4"
+	},
+	"config": {
+		"allow-plugins": false
+	}
+}
