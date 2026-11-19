@@ -72,7 +72,7 @@ describe( 'compiled tables', function() {
 
 		$leaf = fn ( int $route, array $names ) => [ 'status' => 200, 'route' => $route, 'params' => $names ];
 		expect( $compiled['dynamic']['GET'] )->toBe( [
-			'{^(?|/users/(\d+)$|/([^/]+)\-([^/]++)$()()|/docs/(.+)(?<!/)$()|/caf%C3%A9/([^/]++)$()())}sD' => [
+			'{^/(?|users/(\d+)$|([^/]+)\-([^/]++)$()()|docs/(.+)(?<!/)$()|caf%C3%A9/([^/]++)$()())}sD' => [
 				2 => $leaf( 0, [ 'id' ] ),
 				3 => $leaf( 2, [ 'path' ] ),
 				4 => $leaf( 3, [ 'id' ] ),
@@ -103,7 +103,22 @@ describe( 'compiled tables', function() {
 		] );
 
 		expect( array_keys( $compiled['dynamic']['GET'] ) )->toBe( [
-			'{^(?|/users(?|/(\d+)$|/([^/]++)(?|/posts$()|/likes$()()))|/([^/]++)/about$()()())}sD',
+			'{^/(?|users/(?|(\d+)$|([^/]++)/(?|posts$()|likes$()()))|([^/]++)/about$()()())}sD',
+		] );
+	} );
+
+	// /api would share the a, but {a}-{b} can match anything there, so /api
+	// stays after it.
+	it( 'shares text one character at a time, without moving a route past a parameter', function() {
+		$compiled = compile_routes( [
+			[ 'GET', '/accounts/{id}', 'page.php' ],
+			[ 'GET', '/apps/{id}', 'page.php' ],
+			[ 'GET', '/{a}-{b}', 'page.php' ],
+			[ 'GET', '/api/{id}', 'page.php' ],
+		] );
+
+		expect( array_keys( $compiled['dynamic']['GET'] ) )->toBe( [
+			'{^/(?|a(?|ccounts/([^/]++)$|pps/([^/]++)$())|([^/]+)\-([^/]++)$()()|api/([^/]++)$()())}sD',
 		] );
 	} );
 
@@ -115,7 +130,7 @@ describe( 'compiled tables', function() {
 
 		$compiled = compile_routes( $routes );
 		$regex = array_key_first( $compiled['dynamic']['GET'] );
-		expect( $regex )->toStartWith( '{^(?|/r0/([^/]++)$(*:0)|/r1/([^/]++)$(*:1)|' );
+		expect( $regex )->toStartWith( '{^/r(?|0/([^/]++)$(*:0)|1(?|/([^/]++)$(*:1)|0/([^/]++)$(*:10)|' );
 		expect( array_column( $compiled['dynamic']['GET'][$regex], 'route' ) )->toBe( range( 0, Tillkite\Compiler::COUNT_LEAVES ) );
 	} );
 

@@ -945,25 +945,110 @@ final class Compiler {
 		return false;
 	}
 
-	// Writes a tree node as a regex, with each child as an alternative.
-	// $position counts the leaves written so far.
+	// Writes a tree node as a regex. $position counts the leaves written so
+	// far. Each child becomes an alternative: [ 'text' => its literal text,
+	// 'rest' => the regex after that, its children included, 'literal' =>
+	// true when it has no parameters ]. A leaf has no text and a rest of its
+	// end.
 	private function render( array $node, array $ends, int &$position ) : string {
 		$alternatives = [];
 		foreach ( $node['children'] as $child ) {
 			if ( $child['piece'] === null ) {
-				$alternatives[] = $ends[$position];
+				$alternatives[] = [ 'text' => '', 'rest' => $ends[$position], 'literal' => true ];
 				$position++;
 				continue;
 			}
 
-			$alternatives[] = $child['piece']['regex'] . $this->render( $child, $ends, $position );
+			$piece = $child['piece'];
+			$rest = \substr( $piece['regex'], \strlen( \preg_quote( $piece['text'] ) ) );
+			$alternatives[] = [
+				'text' => $piece['text'],
+				'rest' => $rest . $this->render( $child, $ends, $position ),
+				'literal' => $piece['literal'],
+			];
 		}
 
-		$regex = $alternatives[0];
-		if ( \count( $alternatives ) > 1 ) {
-			$regex = '(?|' . \implode( '|', $alternatives ) . ')';
+		$regex = $this->alternation( $alternatives, 0 );
+		return $regex;
+	}
+
+	// Writes alternatives whose text up to $offset is already matched, with
+	// the ones that go on with the same character sharing it, so PCRE tries
+	// one alternative per character instead of all of them:
+	// /a(?|ccounts...|pps...)|/balance... instead of /accounts...|/apps...|/balance...
+	//
+	// PCRE tries alternatives in order, and that order decides which route
+	// wins. Moving one ahead of others is safe only when no path can match
+	// both, which is the case when their text differs at $offset. An
+	// alternative whose text runs out before a parameter can match anything
+	// there, so nothing moves past it. A leaf, or plain text that runs out,
+	// is next followed by / or the end, which no other text has there.
+	private function alternation( array $alternatives, int $offset ) : string {
+		$groups = [];
+		$open = [];
+		foreach ( $alternatives as $alternative ) {
+			$key = 'end';
+			if ( \strlen( $alternative['text'] ) > $offset ) {
+				$key = $alternative['text'][$offset];
+			} elseif ( ! $alternative['literal'] ) {
+				$key = 'param';
+			}
+
+			if ( $key === 'param' ) {
+				$groups[] = [ $alternative ];
+				$open = [];
+				continue;
+			}
+
+			if ( isset( $open[$key] ) ) {
+				$groups[$open[$key]][] = $alternative;
+				continue;
+			}
+
+			$open[$key] = \count( $groups );
+			$groups[] = [ $alternative ];
 		}
 
+		$regexes = [];
+		foreach ( $groups as $group ) {
+			$regexes[] = $this->group_regex( $group, $offset );
+		}
+
+		$regex = $regexes[0];
+		if ( \count( $regexes ) > 1 ) {
+			$regex = '(?|' . \implode( '|', $regexes ) . ')';
+		}
+
+		return $regex;
+	}
+
+	// A group's shared text after $offset, then its alternatives.
+	private function group_regex( array $group, int $offset ) : string {
+		$first = $group[0]['text'];
+		if ( \count( $group ) === 1 ) {
+			$regex = \preg_quote( \substr( $first, $offset ) ) . $group[0]['rest'];
+			return $regex;
+		}
+
+		$length = \strlen( $first ) - $offset;
+		foreach ( $group as $alternative ) {
+			$length = \min( $length, \strlen( $alternative['text'] ) - $offset );
+			while ( $length > 0 && \strncmp( \substr( $alternative['text'], $offset ), \substr( $first, $offset ), $length ) !== 0 ) {
+				$length--;
+			}
+		}
+
+		if ( $length > 0 ) {
+			$regex = \preg_quote( \substr( $first, $offset, $length ) ) . $this->alternation( $group, $offset + $length );
+			return $regex;
+		}
+
+		$regexes = [];
+		foreach ( $group as $alternative ) {
+			$regexes[] = \preg_quote( \substr( $alternative['text'], $offset ) ) . $alternative['rest'];
+		}
+
+		$regex = '(?|' . \implode( '|', $regexes ) . ')';
 		return $regex;
 	}
 
