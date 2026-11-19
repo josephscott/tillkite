@@ -542,6 +542,71 @@ class App {
 	}
 
 	/**
+	 * Returns the real path of a file in a directory, for a name that comes
+	 * from a request, like a parameter, or null when no file by that name is
+	 * inside the directory:
+	 *
+	 *     $file = $tillkite->file( __DIR__ . '/../docs', $params['path'] . '.md' );
+	 *     if ( $file === null ) {
+	 *         return $tillkite->error( 404 );
+	 *     }
+	 *
+	 *     readfile( $file );
+	 *
+	 * The name is the file's, or its path from the directory, like
+	 * 'guide/install.md'. Whatever it holds, the path that comes back is a
+	 * file inside the directory, with every symlink followed: null is the
+	 * answer for a name with an empty, . or .. segment, between / or \, so
+	 * one that starts with a / or has a stream wrapper's ://, for one with a
+	 * null byte, for a directory, and for a symlink, or a file under one, that
+	 * leads outside the directory. Open the path it returns, not the name, so
+	 * what's opened is what was checked. It works anywhere, even before run().
+	 *
+	 * PHP remembers what realpath() found, for realpath_cache_ttl seconds,
+	 * 120 unless php.ini says otherwise, so a file or a directory that was
+	 * swapped for a symlink since PHP last looked would pass as what it was.
+	 * So each part of the name is forgotten first, and realpath() looks again.
+	 *
+	 * The directory is an absolute path, built from __DIR__, like the options.
+	 * Another is logged, and gets null.
+	 */
+	public function file( string $directory, string $name ) : ?string {
+		$file = null;
+		if ( ! $this->is_absolute( $directory ) ) {
+			\error_log( "Tillkite: file() takes its directory as an absolute path, built from __DIR__, so it returned null for '" . Escape::log( $directory ) . "'" );
+			return $file;
+		}
+
+		// realpath() throws for a null byte.
+		if ( \str_contains( $directory . $name, "\0" ) ) {
+			return $file;
+		}
+
+		$root = \realpath( $directory );
+		if ( $root === false ) {
+			return $file;
+		}
+
+		$root = \rtrim( $root, '/\\' );
+		$path = $root;
+		foreach ( \explode( '/', \strtr( $name, '\\', '/' ) ) as $part ) {
+			if ( $part === '' || $part === '.' || $part === '..' ) {
+				return $file;
+			}
+
+			$path .= \DIRECTORY_SEPARATOR . $part;
+			\clearstatcache( true, $path );
+		}
+
+		$real = \realpath( $path );
+		if ( $real !== false && \is_file( $real ) && \str_starts_with( $real, $root . \DIRECTORY_SEPARATOR ) ) {
+			$file = $real;
+		}
+
+		return $file;
+	}
+
+	/**
 	 * Shows the error page for a 4xx code other than 405, like 404 or 403,
 	 * from a before-file or handler:
 	 *
