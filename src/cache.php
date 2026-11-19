@@ -61,7 +61,8 @@ final class Cache {
 	 * It goes to a temporary file first, and is renamed into place, so a
 	 * request never includes half a file. Its modification time is set a
 	 * minute in the past, so OPcache caches it right away instead of waiting
-	 * out opcache.file_update_protection.
+	 * out opcache.file_update_protection. Then the routes file's older cache
+	 * files are removed.
 	 *
 	 * The web server runs the cache file, so anyone who can put a file in its
 	 * place can run code as the web server. So it isn't written in a
@@ -88,6 +89,9 @@ final class Cache {
 		$php = $this->header() . 'return ' . \var_export( $compiled, true ) . ";\n";
 		$written = \file_put_contents( $temp, $php ) !== false && \chmod( $temp, 0o644 ) && \touch( $temp, \time() - 60 ) && \rename( $temp, $this->file );
 		if ( $written ) {
+			// Another request may be removing the same files, so warnings from
+			// here don't matter.
+			$this->remove_older();
 			$error = '';
 		} else {
 			if ( \is_file( $temp ) ) {
@@ -170,5 +174,21 @@ final class Cache {
 	private function header() : string {
 		$header = '<?php // Tillkite route cache for the routes file ' . \hash( 'xxh128', $this->routes ) . "\n";
 		return $header;
+	}
+
+	// Removes the other cache files for this routes file. Apps that share the
+	// directory keep theirs, because their first line differs.
+	private function remove_older() : void {
+		$header = $this->header();
+		foreach ( \scandir( $this->directory ) ?: [] as $name ) {
+			$file = $this->directory . '/' . $name;
+			if ( $file === $this->file || ! \str_starts_with( $name, 'tillkite-' ) || ! \str_ends_with( $name, '.php' ) ) {
+				continue;
+			}
+
+			if ( \file_get_contents( $file, false, null, 0, \strlen( $header ) ) === $header ) {
+				\unlink( $file );
+			}
+		}
 	}
 }

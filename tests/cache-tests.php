@@ -69,6 +69,22 @@ it( 'uses another file when the routes file or a setting changes', function() {
 	expect( ( new Cache( $var, $routes, 'a' ) )->read() )->toBeNull();
 } );
 
+it( 'removes the older cache files of its own routes file only', function() {
+	[ $var, $routes ] = cache_setup();
+	$other = dirname( $routes ) . '/other-routes.php';
+	write_routes( $other, '/', time() - 60 );
+	( new Cache( $var, $routes, '' ) )->write( [] );
+	( new Cache( $var, $other, '' ) )->write( [] );
+
+	touch( $routes, time() - 30 );
+	$cache = new Cache( $var, $routes, '' );
+	$cache->write( [ 'new' ] );
+
+	expect( cache_files( $var ) )->toHaveCount( 2 );
+	expect( $cache->read() )->toBe( [ 'new' ] );
+	expect( ( new Cache( $var, $other, '' ) )->read() )->toBe( [] );
+} );
+
 // Anyone who can put a file in the directory, or change the cache file, could
 // run code as the web server.
 it( 'writes nothing in a directory every user can write to, and writes the file as 0644 whatever the umask', function() {
