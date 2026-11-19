@@ -11,6 +11,9 @@
 		"phpstan/phpstan": "2.3.6",
 		"pestphp/pest": "5.3.5"
 	},
+	"bin": [
+		"bin/tillkite"
+	],
 	"autoload": {
 		"classmap": [
 			"src/"
