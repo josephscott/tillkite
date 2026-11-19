@@ -125,3 +125,49 @@ describe( 'routing', function() {
 		expect( request( 'GET', '/', [ 'before' => 'prints-before.php' ] )['body'] )->toBe( 'before text' );
 	} );
 } );
+
+describe( 'error()', function() {
+	// error.php writes, calls error() without returning its false, and
+	// writes again. before.php sets a variable that the 403 file can't see.
+	it( "throws away the handler's output, then runs the error file in its own scope with the route's \$params, or sends plain text", function( string $path, array $options, int $status, string $body ) {
+		$response = request( 'GET', $path, $options );
+
+		expect( [ $response['status'], $response['body'] ] )->toBe( [ $status, $body ] );
+	} )->with( [
+		'the 404 file' => [ '/error/404', [ 'errors' => [ 404 => '404.php' ] ], 404, 'the 404 page' ],
+		'a 403 file' => [ '/error/403', [ 'before' => 'before.php', 'errors' => [ 403 => '403.php' ] ], 403, 'the 403 page [["tillkite","params"],{"code":"403"}]' ],
+		'plain text' => [ '/error/410', [], 410, "410 Gone\n" ],
+	] );
+
+	// error-before.php calls it without returning its false.
+	it( "stops at a before-file that calls it, even when it doesn't return false", function( string $method, string $target ) {
+		$response = request( $method, $target, [ 'before' => 'error-before.php' ] );
+
+		expect( [ $response['status'], $response['body'] ] )->toBe( [ 403, "403 Forbidden\n" ] );
+		expect( $response['headers'] )->not->toHaveKey( 'allow' );
+	} )->with( [
+		'a route' => [ 'GET', '/' ],
+		'a miss' => [ 'POST', '/' ],
+	] );
+
+	it( "sends a 500 for a code it doesn't take, and logs it", function() {
+		$response = request( 'GET', '/error/405' );
+
+		expect( [ $response['status'], $response['body'] ] )->toBe( [ 500, "500 Internal Server Error\n" ] );
+		expect( file_get_contents( site()['log'] ) )->toContain( 'Tillkite: error() takes a 4xx code other than 405, like 404 or 403, not 405' );
+	} );
+
+	it( 'does nothing in an error file, and logs it', function() {
+		$response = request( 'GET', '/nope', [ 'errors' => [ 404 => 'calls-error.php' ] ] );
+
+		expect( [ $response['status'], $response['body'] ] )->toBe( [ 404, 'still the 404 page' ] );
+		expect( file_get_contents( site()['log'] ) )->toContain( 'Tillkite: error() works only in a before-file or handler, so error( 403 ) did nothing' );
+	} );
+
+	it( 'adds nothing to output already sent, and logs it', function() {
+		$response = request( 'GET', '/error/404', [ 'buffer' => false, 'errors' => [ 404 => '404.php' ] ] );
+
+		expect( [ $response['status'], $response['body'] ] )->toBe( [ 200, 'partial after' ] );
+		expect( file_get_contents( site()['log'] ) )->toContain( 'Tillkite: error( 404 ) came after the output had started, so nothing was added to it' );
+	} );
+} );

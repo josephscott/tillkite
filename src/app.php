@@ -82,6 +82,16 @@ class App {
 
 	private array $problems = [];
 
+	// The parameters of the files that are running, for the error files.
+	private array $params = [];
+
+	// True while the before-file and handler run, the only time error() does
+	// anything.
+	private bool $in_route_files = false;
+
+	// The code that a before-file or handler passed to error().
+	private ?int $error_code = null;
+
 	// The output buffer level from before Tillkite's own buffer, or null when
 	// the files that are running aren't buffered.
 	private ?int $level = null;
@@ -159,9 +169,7 @@ class App {
 		$matcher = new Matcher( $compiled );
 		$result = $matcher->match( $method, $path );
 		if ( $result['status'] === 200 ) {
-			$this->start( $this->buffer );
-			Runner::files( $this, $result['params'], $before, $this->handlers . '/' . $compiled['routes'][$result['route']][2] );
-			$this->finish();
+			$this->run_route( $before, $this->handlers . '/' . $compiled['routes'][$result['route']][2], $result['params'] );
 			return;
 		}
 
@@ -178,13 +186,38 @@ class App {
 		$this->miss( $result, $query );
 	}
 
+	// Runs the before-file and the handler.
+	private function run_route( string $before, string $handler, array $params ) : void {
+		$this->start( $this->buffer, $params );
+		$this->in_route_files = true;
+		Runner::files( $this, $params, $before, $handler, $this->next_file( ... ) );
+		$this->in_route_files = false;
+		if ( $this->error_code !== null ) {
+			$this->show_error( $this->error_code );
+			return;
+		}
+
+		$this->finish();
+	}
+
 	// Runs a miss's before-file, with no handler after it. It's always
 	// buffered, because what it prints is thrown away before the response.
 	// Returns true when it ran through. When it returned false, what it
-	// printed is sent instead.
+	// printed is sent instead, and when it called error(), its page is.
 	private function run_miss_before( string $before ) : bool {
-		$this->start( true );
-		$ran = Runner::files( $this, [], $before, '' );
+		$this->start( true, [] );
+		$ran = false;
+		$this->in_route_files = true;
+		Runner::files( $this, [], $before, '', function() use ( &$ran ) : bool {
+			$ran = true;
+			return false;
+		} );
+		$this->in_route_files = false;
+		if ( $this->error_code !== null ) {
+			$this->show_error( $this->error_code );
+			return false;
+		}
+
 		if ( ! $ran ) {
 			$this->finish();
 			return $ran;
@@ -217,12 +250,13 @@ class App {
 			\header( 'Allow: ' . \implode( ', ', $result['allow'] ) );
 		}
 
-		$this->run_error( $code );
+		$this->run_error( $code, [] );
 	}
 
 	// Runs the error file for a 4xx code, in a scope of its own, or sends
-	// plain text.
-	private function run_error( int $code ) : void {
+	// plain text. The 404 and 405 files run here when no route matches, and
+	// any 4xx file runs here for error(), with the route's parameters.
+	private function run_error( int $code, array $params ) : void {
 		$file = $this->errors[$code] ?? '';
 		if ( $file === '' ) {
 			$this->plain( $code );
@@ -230,13 +264,49 @@ class App {
 		}
 
 		\http_response_code( $code );
-		$this->start( $this->buffer );
-		Runner::files( $this, [], '', $this->handlers . '/' . $file );
+		$this->start( $this->buffer, $params );
+		Runner::files( $this, $params, '', $this->handlers . '/' . $file, $this->next_file( ... ) );
 		$this->finish();
 	}
 
+	// Shows the error page a before-file or handler asked for with error(),
+	// once its file has returned. What's buffered is thrown away. Output
+	// that's already been sent can't be taken back, or its status changed,
+	// so then it's logged and nothing is added. A code that error() doesn't
+	// take is logged, and the response is a 500.
+	private function show_error( int $code ) : void {
+		$this->error_code = null;
+		$problem = '';
+		if ( $code === 405 || $code === 500 || ! isset( self::REASONS[$code] ) ) {
+			$problem = 'error() takes a 4xx code other than 405, like 404 or 403, not ' . $code;
+			\error_log( 'Tillkite: ' . Escape::log( $problem ) );
+		}
+
+		if ( \headers_sent() ) {
+			\error_log( 'Tillkite: error( ' . $code . ' ) came after the output had started, so nothing was added to it' );
+			$this->finish();
+			return;
+		}
+
+		$this->discard_output();
+		if ( $problem !== '' ) {
+			$this->plain( 500 );
+			return;
+		}
+
+		$this->run_error( $code, $this->params );
+	}
+
+	// Runner calls it before the handler or error file. It returns false once
+	// a file has called error(), so no file after that one runs.
+	private function next_file() : bool {
+		$next = $this->error_code === null;
+		return $next;
+	}
+
 	// Starts the buffer, if there is one.
-	private function start( bool $buffer ) : void {
+	private function start( bool $buffer, array $params ) : void {
+		$this->params = $params;
 		$this->level = null;
 		if ( $buffer ) {
 			$this->level = \ob_get_level();
@@ -291,6 +361,29 @@ class App {
 		}
 
 		return $value;
+	}
+
+	/**
+	 * Shows the error page for a 4xx code other than 405, like 404 or 403,
+	 * from a before-file or handler:
+	 *
+	 *     return $tillkite->error( 404 );
+	 *
+	 * Once the file that called it returns, no file after it runs. What the
+	 * files have buffered is thrown away, and the file for that code in the
+	 * errors option runs, with the same $params, or a plain-text response is
+	 * sent. It returns false, so returning it also stops a before-file the
+	 * usual way. Only the first call counts, and a call from anywhere else,
+	 * like an error file, does nothing but log a warning.
+	 */
+	public function error( int $code ) : false {
+		if ( ! $this->in_route_files ) {
+			\error_log( 'Tillkite: error() works only in a before-file or handler, so error( ' . $code . ' ) did nothing' );
+			return false;
+		}
+
+		$this->error_code ??= $code;
+		return false;
 	}
 
 	// Loads the routes file and compiles it. Every problem found goes into
