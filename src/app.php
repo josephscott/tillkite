@@ -135,13 +135,20 @@ class App {
 		return true;
 	}
 
-	// Matches the request and runs the route's handler. When matching fails,
-	// the response is a 500, and anything else that doesn't match is a 404.
+	// Matches the request and runs the before-file and the route's handler.
+	// When matching fails, the response is a 500. Anything else that doesn't
+	// match runs the before-file too, and then gets a 404, so a before-file
+	// that checks a login hides which paths exist.
 	private function respond( array $compiled, string $method, string $path ) : void {
+		$before = '';
+		if ( $this->before !== '' ) {
+			$before = $this->handlers . '/' . $this->before;
+		}
+
 		$matcher = new Matcher( $compiled );
 		$result = $matcher->match( $method, $path );
 		if ( $result['status'] === 200 ) {
-			Runner::handler( $this, $result['params'], $this->handlers . '/' . $compiled['routes'][$result['route']][2] );
+			Runner::files( $this, $result['params'], $before, $this->handlers . '/' . $compiled['routes'][$result['route']][2] );
 			return;
 		}
 
@@ -151,7 +158,9 @@ class App {
 			return;
 		}
 
-		$this->plain( 404 );
+		if ( Runner::files( $this, [], $before, '' ) ) {
+			$this->plain( 404 );
+		}
 	}
 
 	// Returns the request's value for a name in $_SERVER, like REQUEST_URI,

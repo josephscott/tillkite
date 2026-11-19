@@ -61,10 +61,22 @@ describe( 'routing', function() {
 		expect( request( 'GET', '/scope' )['body'] )->toBe( '{"vars":["tillkite","params"],"private":false}' );
 	} );
 
-	it( 'sends a plain 404 when nothing matches', function() {
-		$response = request( 'GET', '/nowhere' );
+	it( 'sends a plain 404 when nothing matches, after the before-file', function() {
+		$response = request( 'GET', '/nowhere', [ 'before' => 'before.php' ] );
 
 		expect( $response['status'] )->toBe( 404 );
+		expect( $response['headers']['x-before'] )->toBe( 'ran' );
 		expect( $response['body'] )->toBe( "404 Not Found\n" );
 	} );
+
+	it( "runs the before-file in the handler's scope", function() {
+		expect( request( 'GET', '/scope', [ 'before' => 'before.php' ] )['body'] )->toBe( '{"vars":["tillkite","params","from_before"],"private":false}' );
+	} );
+
+	it( 'stops at a before-file that returns false, before the handler or the 404', function( string $target ) {
+		$response = request( 'GET', $target, [ 'before' => 'deny.php' ] );
+
+		expect( $response['status'] )->toBe( 401 );
+		expect( $response['body'] )->toBe( 'denied' );
+	} )->with( [ 'a route' => [ '/scope' ], 'a miss' => [ '/nowhere' ] ] );
 } );
