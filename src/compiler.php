@@ -105,6 +105,8 @@ final class Compiler {
 
 		$blocked = [];
 		$reachable = [];
+		$built_items = [];
+		$built_tables = [];
 		foreach ( $this->table_keys( $parsed, $allowed ) as $table ) {
 			$static = [];
 			$items = [];
@@ -140,8 +142,18 @@ final class Compiler {
 				}
 			}
 
+			// HEAD usually has the same routes as GET, so it reuses its regexes.
+			// array_search() compares the items in less time than serialize()
+			// takes to make a key of them.
+			$built = \array_search( $items, $built_items, true );
+			if ( $built === false ) {
+				$built = \count( $built_tables );
+				$built_items[] = $items;
+				$built_tables[] = $this->combine( $items );
+			}
+
 			$compiled['static'][$table] = $static;
-			$compiled['dynamic'][$table] = $this->combine( $items );
+			$compiled['dynamic'][$table] = $built_tables[$built];
 		}
 
 		// The matcher checks the static table first, so a static path that an
