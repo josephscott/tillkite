@@ -738,7 +738,8 @@ final class Compiler {
 	}
 
 	// Joins a table's [ route index, pieces, names ] items, in route order,
-	// into one regex, and returns [ regex => leaves ]. When PCRE says the
+	// into one regex, with routes that start with the same pieces sharing
+	// them, and returns [ regex => leaves ]. When PCRE says the
 	// regex is too large, splits the list in half and tries again.
 	private function combine( array $items ) : array {
 		$regexes = [];
@@ -746,7 +747,7 @@ final class Compiler {
 			return $regexes;
 		}
 
-		$tree = [ 'children' => [] ];
+		$tree = [ 'fixed' => true, 'children' => [], 'last' => [], 'variants' => [] ];
 		foreach ( $items as [ $index, $pieces, $names ] ) {
 			$this->insert( $tree, $pieces, 0, [ 'status' => 200, 'route' => $index, 'params' => $names ] );
 		}
@@ -828,17 +829,120 @@ final class Compiler {
 	}
 
 	// Adds a route's pieces to the tree, one level per piece, ending in its
-	// leaf. PCRE tries a node's children in order, so each route starts a new
-	// child at the end.
+	// leaf. PCRE tries a node's children in order, so a route goes under the
+	// last child with the same piece only when it can't match a path that any
+	// later child matches; otherwise it starts a new child at the end.
+	//
+	// Only a fixed child is shared. When a shared piece can end in more than
+	// one place, like /(.+), PCRE would try the later route's rest before the
+	// earlier route's other ways to match it, so the later route could win.
+	// Below a piece like that there's only ever one route.
 	private function insert( array &$node, array $pieces, int $depth, array $leaf ) : void {
+		$node['variants'][] = $pieces;
 		if ( $depth === \count( $pieces ) ) {
 			$node['children'][] = [ 'piece' => null, 'leaf' => $leaf ];
 			return;
 		}
 
-		$position = \count( $node['children'] );
-		$node['children'][] = [ 'piece' => $pieces[$depth], 'children' => [] ];
+		$piece = $pieces[$depth];
+		$position = $node['last'][$piece['regex']] ?? null;
+		if ( $position !== null && ! $this->can_skip( $node, $position + 1, $pieces, $depth ) ) {
+			$position = null;
+		}
+
+		if ( $position === null ) {
+			$position = \count( $node['children'] );
+			$fixed = $node['fixed'] && $piece['fixed'];
+			$node['children'][] = [
+				'piece' => $piece,
+				'fixed' => $fixed,
+				'children' => [],
+				'last' => [],
+				'variants' => [],
+			];
+
+			if ( $fixed ) {
+				$node['last'][$piece['regex']] = $position;
+			}
+		}
+
 		$this->insert( $node['children'][$position], $pieces, $depth + 1, $leaf );
+	}
+
+	// Whether a route can go ahead of the node's children from $start on: no
+	// path may match both it and any route under them.
+	private function can_skip( array $node, int $start, array $pieces, int $depth ) : bool {
+		$count = \count( $node['children'] );
+		for ( $i = $start; $i < $count; $i++ ) {
+			$child = $node['children'][$i];
+
+			// Everything before this level matched one segment per piece, so a
+			// route that ends here matches fewer segments than this one, and a
+			// child whose piece can't match the same segment holds no route
+			// that can match the same path.
+			if ( $node['fixed'] && ( $child['piece'] === null || $this->different_segments( $child['piece'], $pieces[$depth] ) ) ) {
+				continue;
+			}
+
+			if ( $child['piece'] === null ) {
+				return false;
+			}
+
+			foreach ( $child['variants'] as $other ) {
+				if ( ! $this->disjoint( $other, $pieces ) ) {
+					return false;
+				}
+			}
+		}
+
+		return true;
+	}
+
+	// Whether no path can match both lists of pieces. It only answers true
+	// when it's sure: it compares the pieces in step while both match exactly
+	// one segment each.
+	private function disjoint( array $a, array $b ) : bool {
+		$count = \min( \count( $a ), \count( $b ) );
+		for ( $i = 0; $i < $count; $i++ ) {
+			if ( ! $a[$i]['fixed'] || ! $b[$i]['fixed'] ) {
+				return false;
+			}
+
+			if ( $this->different_segments( $a[$i], $b[$i] ) ) {
+				return true;
+			}
+		}
+
+		// Each piece starts with a /. The shorter list matches exactly one
+		// segment per piece, and the longer one needs more segments than that.
+		if ( \count( $a ) !== \count( $b ) ) {
+			return true;
+		}
+
+		return false;
+	}
+
+	// Whether two fixed pieces can't match the same segment: both are plain
+	// text and differ, or the text they start with differs.
+	private function different_segments( array $a, array $b ) : bool {
+		if ( ! $a['fixed'] || ! $b['fixed'] ) {
+			return false;
+		}
+
+		if ( $a['literal'] && $b['literal'] ) {
+			if ( $a['text'] !== $b['text'] ) {
+				return true;
+			}
+
+			return false;
+		}
+
+		$length = \min( \strlen( $a['text'] ), \strlen( $b['text'] ) );
+		if ( \strncmp( $a['text'], $b['text'], $length ) !== 0 ) {
+			return true;
+		}
+
+		return false;
 	}
 
 	// Writes a tree node as a regex, with each child as an alternative.

@@ -94,6 +94,19 @@ describe( 'compiled tables', function() {
 		] );
 	} );
 
+	it( 'shares how dynamic routes start, even past routes that match other paths', function() {
+		$compiled = compile_routes( [
+			[ 'GET', '/users/{id:\d+}', 'page.php' ],
+			[ 'GET', '/users/{id}/posts', 'page.php' ],
+			[ 'GET', '/{lang}/about', 'page.php' ],
+			[ 'GET', '/users/{id}/likes', 'page.php' ],
+		] );
+
+		expect( array_keys( $compiled['dynamic']['GET'] ) )->toBe( [
+			'{^(?|/users(?|/(\d+)$|/([^/]++)(?|/posts$()|/likes$()()))|/([^/]++)/about$()()())}sD',
+		] );
+	} );
+
 	it( 'tells more routes apart by a MARK', function() {
 		$routes = [];
 		for ( $i = 0; $i <= Tillkite\Compiler::COUNT_LEAVES; $i++ ) {

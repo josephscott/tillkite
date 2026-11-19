@@ -156,3 +156,82 @@ describe( 'matching', function() {
 		expect( $matcher->match( 'GET', '/v1x0/a' )['status'] )->toBe( 404 );
 	} );
 } );
+
+describe( 'order', function() {
+	it( 'picks the earlier route when a route with a parameter for its first segment also matches', function() {
+		$shared_first = make_matcher( [
+			[ 'GET', '/{lang}/about', 'page.php' ],
+			[ 'GET', '/en/{page}', 'page.php' ],
+		] );
+		$segment_first = make_matcher( [
+			[ 'GET', '/en/{page}', 'page.php' ],
+			[ 'GET', '/{lang}/about', 'page.php' ],
+		] );
+
+		expect( $shared_first->match( 'GET', '/en/about' )['route'] )->toBe( 0 );
+		expect( $segment_first->match( 'GET', '/en/about' )['route'] )->toBe( 0 );
+		expect( $segment_first->match( 'GET', '/fr/about' )['route'] )->toBe( 1 );
+	} );
+
+	it( 'lets an earlier dynamic route win over a later static one', function() {
+		$matcher = make_matcher( [
+			[ 'GET', '/users/{id}', 'page.php' ],
+			[ [ 'GET', 'POST' ], '/users/new', 'page.php' ],
+		] );
+
+		expect( $matcher->match( 'GET', '/users/new' )['route'] )->toBe( 0 );
+		expect( $matcher->match( 'POST', '/users/new' )['route'] )->toBe( 1 );
+	} );
+
+	it( 'lets an earlier static route win over a later dynamic one', function() {
+		$matcher = make_matcher( [
+			[ 'GET', '/users/new', 'page.php' ],
+			[ 'GET', '/users/{id}', 'page.php' ],
+		] );
+
+		expect( $matcher->match( 'GET', '/users/new' )['route'] )->toBe( 0 );
+		expect( $matcher->match( 'GET', '/users/7' )['route'] )->toBe( 1 );
+	} );
+
+	it( 'lets a route share how an earlier route starts only when no route in between matches the same paths', function() {
+		$matcher = make_matcher( [
+			[ 'GET', '/r/{a}/x/1', 'page.php' ],
+			[ 'GET', '/r/{a}/{b}/2', 'page.php' ],
+			[ 'GET', '/r/{a}/x/2', 'page.php' ],
+			[ 'GET', '/r/{a}/x/3', 'page.php' ],
+		] );
+
+		expect( $matcher->match( 'GET', '/r/a/x/2' )['route'] )->toBe( 1 );
+		expect( $matcher->match( 'GET', '/r/a/x/3' )['route'] )->toBe( 3 );
+	} );
+
+	it( "keeps a route in place when its text runs into a parameter where others' text goes on", function() {
+		$matcher = make_matcher( [
+			[ 'GET', '/ab/{p:[a-z]+}', 'page.php' ],
+			[ 'GET', '/a{x}/{p}', 'page.php' ],
+			[ 'GET', '/ab/{q:\d+}', 'page.php' ],
+		] );
+
+		expect( $matcher->match( 'GET', '/ab/5' )['route'] )->toBe( 1 );
+	} );
+
+	it( "doesn't share a parameter that can match more than one segment", function() {
+		$matcher = make_matcher( [
+			[ 'GET', '/f/{path:.+}/{name:[a-z]+}/edit', 'page.php' ],
+			[ 'GET', '/f/{path:.+}/edit', 'page.php' ],
+		] );
+
+		expect( $matcher->match( 'GET', '/f/a/b/edit' ) )
+			->toBe( [ 'status' => 200, 'route' => 0, 'params' => [ 'path' => 'a', 'name' => 'b' ] ] );
+	} );
+
+	it( 'lets an explicit HEAD route above a GET route answer HEAD', function() {
+		$matcher = make_matcher( [
+			[ 'HEAD', '/a', 'page.php' ],
+			[ 'GET', '/a', 'page.php' ],
+		] );
+
+		expect( $matcher->match( 'HEAD', '/a' )['route'] )->toBe( 0 );
+		expect( $matcher->match( 'GET', '/a' )['route'] )->toBe( 1 );
+	} );
+} );
