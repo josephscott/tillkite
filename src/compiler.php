@@ -103,9 +103,12 @@ final class Compiler {
 			}
 		}
 
+		$blocked = [];
+		$reachable = [];
 		foreach ( $this->table_keys( $parsed, $allowed ) as $table ) {
 			$static = [];
 			$items = [];
+			$seen = [];
 			foreach ( $parsed as $index => $entry ) {
 				if ( ! $this->applies( $entry['methods'], $table ) ) {
 					continue;
@@ -113,16 +116,57 @@ final class Compiler {
 
 				foreach ( $entry['variants'] as $variant ) {
 					if ( $variant['regex'] === '' ) {
-						$static[$variant['path']] ??= $index;
+						$path = $variant['path'];
+						if ( isset( $static[$path] ) ) {
+							$blocked[$index][$static[$path]] ??= $table;
+							continue;
+						}
+
+						$static[$path] = $index;
 						continue;
 					}
 
+					// Best effort for dynamic routes: only an identical regex is
+					// known to match the same requests.
+					$regex = $variant['regex'];
+					if ( isset( $seen[$regex] ) ) {
+						$blocked[$index][$seen[$regex]] ??= $table;
+						continue;
+					}
+
+					$seen[$regex] = $index;
 					$items[] = [ $index, $variant['pieces'], $variant['names'] ];
+					$reachable[$index] = true;
 				}
 			}
 
 			$compiled['static'][$table] = $static;
 			$compiled['dynamic'][$table] = $this->combine( $items );
+		}
+
+		// The matcher checks the static table first, so a static path that an
+		// earlier dynamic route already matches must come out of it. Otherwise
+		// the later static route would win. It has the checks too, so a path
+		// whose value the dynamic route turns away once it's decoded, like
+		// /files/a%2Fb for /files/{name}, stays.
+		$matcher = new Matcher( [ 'dynamic' => $this->check_copies( $compiled['dynamic'] ), 'checks' => $compiled['checks'] ] );
+		foreach ( $compiled['static'] as $table => $paths ) {
+			foreach ( $paths as $path => $index ) {
+				$found = $matcher->find_dynamic( $table, (string) $path );
+				if ( $found['status'] === 200 && $found['route'] < $index ) {
+					unset( $compiled['static'][$table][$path] );
+					$blocked[$index][$found['route']] ??= $table;
+					continue;
+				}
+
+				$reachable[$index] = true;
+			}
+		}
+
+		foreach ( $parsed as $index => $entry ) {
+			if ( ! isset( $reachable[$index] ) ) {
+				$this->route_problem( $index, $this->blocked_message( $index, $blocked[$index], $parsed ) );
+			}
 		}
 
 		\ksort( $this->entry_problems );
@@ -914,6 +958,47 @@ final class Compiler {
 		return $copy;
 	}
 
+	// Explains why a route never matches. $blockers is [ earlier route index => table ].
+	private function blocked_message( int $index, array $blockers, array $parsed ) : string {
+		\ksort( $blockers );
+		$labels = [];
+		foreach ( \array_keys( $blockers ) as $blocker ) {
+			$labels[] = $this->entries[$blocker]['label'];
+		}
+
+		if ( \count( $labels ) > 1 ) {
+			$message = 'never matches, because routes ' . $this->join( $labels ) . ' come first and match the same requests';
+			return $message;
+		}
+
+		$blocker = \array_key_first( $blockers );
+		if (
+			$parsed[$blocker]['methods'] === $parsed[$index]['methods']
+			&& $parsed[$blocker]['route'][1] === $parsed[$index]['route'][1]
+		) {
+			$message = 'duplicate of route ' . $labels[0];
+			return $message;
+		}
+
+		$message = 'never matches, because route ' . $labels[0] . ' comes first and matches the same requests';
+		if (
+			$blockers[$blocker] === 'HEAD'
+			&& ! \in_array( 'GET', $parsed[$index]['methods'], true )
+			&& \in_array( 'GET', $parsed[$blocker]['methods'], true )
+		) {
+			$message .= ' (a GET route also answers HEAD)';
+		}
+
+		return $message;
+	}
+
+	// [ '1', '2', '4.1' ] => '1, 2 and 4.1'
+	private function join( array $labels ) : string {
+		$last = \array_pop( $labels );
+		$joined = \implode( ', ', $labels ) . ' and ' . $last;
+		return $joined;
+	}
+
 	private function route_problem( int $index, string $message ) : void {
 		$this->entry_problem( $this->entries[$index]['name'], $message );
 	}
@@ -924,6 +1009,19 @@ final class Compiler {
 		if ( ! \in_array( $message, $this->entry_problems[$name] ?? [], true ) ) {
 			$this->entry_problems[$name][] = $message;
 		}
+	}
+
+	// The dynamic tables with check_copy() of each regex.
+	private function check_copies( array $tables ) : array {
+		$copies = [];
+		foreach ( $tables as $table => $regexes ) {
+			$copies[$table] = [];
+			foreach ( $regexes as $regex => $leaves ) {
+				$copies[$table][$this->check_copy( $regex )] = $leaves;
+			}
+		}
+
+		return $copies;
 	}
 
 	private function file_exists( string $file ) : bool {

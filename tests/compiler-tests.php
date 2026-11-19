@@ -38,14 +38,19 @@ describe( 'compiled tables', function() {
 		] );
 	} );
 
-	it( 'keeps the first route for a path', function() {
-		$compiled = compile_routes( [
-			[ 'GET', '/a', 'page.php' ],
-			[ [ 'GET', 'POST' ], '/a', 'page.php' ],
+	// /files/a%2Fb decodes to a value with a /, which {name} turns away, so
+	// it stays.
+	it( 'takes a static path out of its table when an earlier dynamic route matches it', function() {
+		$compiler = make_compiler();
+		$compiled = $compiler->compile( [
+			[ 'GET', '/users/{id}', 'page.php' ],
+			[ 'GET', '/users/new', 'page.php' ],
+			[ 'GET', '/files/{name}', 'page.php' ],
+			[ 'GET', '/files/a%2Fb', 'page.php' ],
 		] );
 
-		expect( array_map( fn ( $paths ) => array_column( $paths, 'route' ), $compiled['static'] ) )
-			->toBe( [ 'GET' => [ 0 ], 'HEAD' => [ 0 ], 'POST' => [ 1 ] ] );
+		expect( $compiler->problems )->toHaveCount( 1 );
+		expect( array_keys( $compiled['static']['GET'] ) )->toBe( [ '/files/a%2Fb' ] );
 	} );
 
 	it( 'puts each static variant of an optional part in the table', function() {
@@ -263,6 +268,61 @@ describe( 'problems', function() {
 
 		expect( $problems )->toBe( [ 'The routes file must return a list of routes, without keys.' ] );
 	} );
+
+	it( 'reports a duplicate route', function() {
+		$problems = route_problems( [
+			[ [ 'POST', 'GET' ], '/a', 'page.php' ],
+			[ [ 'GET', 'POST' ], '/a', 'page.php' ],
+		] );
+
+		expect( $problems )->toHaveCount( 1 );
+		expect( $problems[0] )->toEndWith( 'duplicate of route 1' );
+	} );
+
+	it( 'reports a route that an earlier route hides', function( array $routes, string $message ) {
+		$problems = route_problems( $routes );
+
+		expect( $problems )->toHaveCount( 1 );
+		expect( $problems[0] )->toEndWith( $message );
+	} )->with( [
+		'static behind dynamic' => [
+			[ [ 'GET', '/users/{id}', 'page.php' ], [ 'GET', '/users/new', 'page.php' ] ],
+			'never matches, because route 1 comes first and matches the same requests',
+		],
+		'static behind the shared group' => [
+			[ [ 'GET', '/{lang}/about', 'page.php' ], [ 'GET', '/en/about', 'page.php' ] ],
+			'never matches, because route 1 comes first and matches the same requests',
+		],
+		'dynamic with the same regex' => [
+			[ [ 'GET', '/users/{id}', 'page.php' ], [ 'GET', '/users/{name}', 'page.php' ] ],
+			'never matches, because route 1 comes first and matches the same requests',
+		],
+		'HEAD below GET' => [
+			[ [ 'GET', '/a', 'page.php' ], [ 'HEAD', '/a', 'page.php' ] ],
+			'never matches, because route 1 comes first and matches the same requests (a GET route also answers HEAD)',
+		],
+		'GET below *' => [
+			[ [ '*', '/a', 'page.php' ], [ 'GET', '/a', 'page.php' ] ],
+			'never matches, because route 1 comes first and matches the same requests',
+		],
+		'every method hidden' => [
+			[ [ 'GET', '/a', 'page.php' ], [ 'POST', '/a', 'page.php' ], [ [ 'GET', 'POST' ], '/a', 'page.php' ] ],
+			'never matches, because routes 1 and 2 come first and match the same requests',
+		],
+		'every variant hidden' => [
+			[ [ 'GET', '/blog', 'page.php' ], [ 'GET', '/blog/{page}', 'page.php' ], [ 'GET', '/blog[/{n}]', 'page.php' ] ],
+			'never matches, because routes 1 and 2 come first and match the same requests',
+		],
+	] );
+
+	it( "doesn't report a route that still matches some requests", function( array $routes ) {
+		compile_routes( $routes );
+	} )->with( [
+		'* below GET' => [ [ [ 'GET', '/a', 'page.php' ], [ '*', '/a', 'page.php' ] ] ],
+		'one method still free' => [ [ [ 'GET', '/a', 'page.php' ], [ [ 'GET', 'POST' ], '/a', 'page.php' ] ] ],
+		'one variant still free' => [ [ [ 'GET', '/blog', 'page.php' ], [ 'GET', '/blog[/{page}]', 'page.php' ] ] ],
+		'narrower regex first' => [ [ [ 'GET', '/users/{id:\d+}', 'page.php' ], [ 'GET', '/users/{name}', 'page.php' ] ] ],
+	] );
 
 	it( 'reports bad settings', function( array $settings, string $message ) {
 		$problems = route_problems( [], $settings );

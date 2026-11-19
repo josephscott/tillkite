@@ -70,6 +70,34 @@ final class Matcher {
 		return $result;
 	}
 
+	// Checks only the dynamic routes in one table, the same way match() does.
+	// Compiler uses this to find static routes that an earlier dynamic route
+	// hides.
+	public function find_dynamic( string $table, string $path ) : array {
+		$result = [ 'status' => 404 ];
+		foreach ( $this->compiled['dynamic'][$table] ?? [] as $regex => $leaves ) {
+			$matched = \preg_match( $regex, $path, $matches );
+			if ( $matched === 1 ) {
+				$result = $leaves[$matches['MARK'] ?? \count( $matches )];
+				$params = [];
+				foreach ( $result['params'] as $i => $name ) {
+					$params[$name] = $matches[$i + 1];
+				}
+
+				$result['params'] = $params;
+				$result = $this->decode( $result );
+				break;
+			}
+
+			if ( $matched === false ) {
+				$result = [ 'status' => 500, 'error' => \preg_last_error_msg() ];
+				break;
+			}
+		}
+
+		return $result;
+	}
+
 	// Returns a route's match with its parameters decoded, or a 404 when one
 	// fails its check, or a 500 when PCRE fails. So a route never gets a value
 	// that its regex would turn away, but the routes after it aren't tried,
