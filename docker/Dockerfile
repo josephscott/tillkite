@@ -8,7 +8,7 @@ FROM composer:2.9.8 AS composer
 # The apache stage, for make apache, tagged tillkite-apache:VERSION: PHP's
 # official Apache image, with PHP as an Apache module, mod_php, as many
 # hosts run it, and Apache's modules, mod_rewrite among them, for the
-# .htaccess. The tests start Apache with a configuration of their
+# README's .htaccess. The tests start Apache with a configuration of their
 # own, as user dev.
 FROM php:${PHP_VERSION}-apache AS apache
 

@@ -78,8 +78,15 @@ describe( 'routing', function() {
 		expect( request( 'GET', '/files/a%2Fb/c%20d?x=1' )['body'] )->toBe( '{"path":"a\\/b\\/c d"}' );
 	} );
 
-	it( 'runs the handler in a scope with only $tillkite and $params, and no access to App internals', function() {
-		expect( request( 'GET', '/scope' )['body'] )->toBe( '{"vars":["tillkite","params"],"private":false}' );
+	it( 'runs the handler in a scope with only $tillkite, as the subclass that index.php makes, and $params, and no access to App internals', function() {
+		expect( request( 'GET', '/scope' )['body'] )->toBe( '{"vars":["tillkite","params"],"shout":"HI","private":false}' );
+	} );
+
+	it( 'answers HEAD with the GET handler, and sends no body', function() {
+		$response = request( 'HEAD', '/users/5' );
+
+		expect( $response['status'] )->toBe( 200 );
+		expect( $response['body'] )->toBe( '' );
 	} );
 
 	it( "runs a '*' route for any method, and gives the request's method and URI from method() and uri()", function() {
@@ -107,14 +114,18 @@ describe( 'routing', function() {
 
 	// /group-error's and /teams/{team}'s before-file calls error( 403 ), and
 	// /denied-group's sends a 401 of its own and returns false.
-	it( "sends what a miss's before-file under a prefix stops it with, in place of the 404", function( string $target, int $status, string $body ) {
-		$response = request( 'GET', $target, [ 'before' => 'before.php', 'errors' => [ 403 => '403.php' ] ] );
+	it( "sends what a miss's before-file under a prefix stops it with, in place of the 404, 405 or 308", function( string $method, string $target, int $status, string $body ) {
+		$response = request( $method, $target, [ 'before' => 'before.php', 'errors' => [ 403 => '403.php' ] ] );
 
 		expect( [ $response['status'], $response['body'] ] )->toBe( [ $status, $body ] );
+		expect( $response['headers'] )->not->toHaveKey( 'allow' );
+		expect( $response['headers'] )->not->toHaveKey( 'location' );
 	} )->with( [
-		'error()' => [ '/group-error/nope', 403, 'the 403 page [["tillkite","params"],[]]' ],
-		'error() under a prefix with a parameter, which the files get' => [ '/teams/a%20b/nope', 403, 'the 403 page [["tillkite","params"],{"team":"a b"}]' ],
-		'a before-file that returns false' => [ '/denied-group/nope', 401, 'denied' ],
+		'error(), in place of a 404' => [ 'GET', '/group-error/nope', 403, 'the 403 page [["tillkite","params"],[]]' ],
+		'error(), in place of a 405' => [ 'POST', '/group-error', 403, 'the 403 page [["tillkite","params"],[]]' ],
+		'error(), in place of a 308' => [ 'GET', '/group-error/', 403, 'the 403 page [["tillkite","params"],[]]' ],
+		'error() under a prefix with a parameter, which the files get' => [ 'GET', '/teams/a%20b/nope', 403, 'the 403 page [["tillkite","params"],{"team":"a b"}]' ],
+		'a before-file that returns false' => [ 'GET', '/denied-group/nope', 401, 'denied' ],
 	] );
 
 	it( "doesn't run a miss's later before-file after one that redirects", function() {
@@ -185,16 +196,19 @@ describe( 'routing', function() {
 		expect( $response['headers'] )->not->toHaveKey( 'x-route-before' );
 	} )->with( [ 'a route' => [ '/scope/own-before' ], 'a miss' => [ '/nowhere' ] ] );
 
-	it( "stops at a before-file that redirects or sets an error status, even when it doesn't return false", function( string $target, string $before, int $status, string $body, ?string $location ) {
-		$response = request( 'GET', $target, [ 'before' => $before ] );
+	it( "stops at a before-file that redirects or sets an error status, even when it doesn't return false", function( string $method, string $target, string $before, int $status, string $body, ?string $location ) {
+		$response = request( $method, $target, [ 'before' => $before ] );
 
 		expect( [ $response['status'], $response['body'], $response['headers']['location'] ?? null ] )->toBe( [ $status, $body, $location ] );
 		expect( $response['headers'] )->not->toHaveKey( 'x-route-before' );
+		expect( $response['headers'] )->not->toHaveKey( 'allow' );
 	} )->with( [
-		'a redirect, before a later before-file and the handler' => [ '/scope/own-before', 'redirect-before.php', 302, 'signing in', '/sign-in' ],
-		'an error status' => [ '/', 'forbid-before.php', 403, 'forbidden', null ],
-		'a redirect, in place of a 404' => [ '/nope', 'redirect-before.php', 302, 'signing in', '/sign-in' ],
-		'a status under 300' => [ '/', 'created-before.php', 201, 'text', '/new' ],
+		'a redirect, before a later before-file and the handler' => [ 'GET', '/scope/own-before', 'redirect-before.php', 302, 'signing in', '/sign-in' ],
+		'an error status' => [ 'GET', '/', 'forbid-before.php', 403, 'forbidden', null ],
+		'a redirect, in place of a 404' => [ 'GET', '/nope', 'redirect-before.php', 302, 'signing in', '/sign-in' ],
+		'a redirect, in place of a 405' => [ 'POST', '/', 'redirect-before.php', 302, 'signing in', '/sign-in' ],
+		'a redirect, in place of a 308' => [ 'GET', '/scope/', 'redirect-before.php', 302, 'signing in', '/sign-in' ],
+		'a status under 300' => [ 'GET', '/', 'created-before.php', 201, 'text', '/new' ],
 	] );
 
 	it( 'buffers output, so a header can come after it, unless buffering is off', function() {

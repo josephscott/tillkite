@@ -61,6 +61,14 @@ describe( 'matching', function() {
 		expect( $matcher->match( 'GET', '/x-y%20z' )['params'] )->toBe( [ 'a' => 'x', 'b' => 'y z' ] );
 	} );
 
+	it( "keeps a group's before-files for a route's value, but not for its prefix's", function() {
+		$matcher = make_matcher( [ [ 'prefix' => '/t/{team:[^./]+}', 'routes' => [ [ 'GET', '/f/{v:[^./]+}', 'page.php' ] ] ] ] );
+
+		expect( $matcher->match( 'GET', '/t/a%20b/f/%2E' ) )->toBe( [ 'status' => 404, 'group' => 0, 'params' => [ 'team' => 'a b' ] ] );
+		expect( $matcher->match( 'GET', '/t/%2E/f/ok' ) )->toBe( [ 'status' => 404 ] );
+		expect( $matcher->match( 'GET', '/t/%2E/nope' ) )->toBe( [ 'status' => 404 ] );
+	} );
+
 	it( 'returns 500 when checking a decoded value fails', function() {
 		// Encoded, the value has no a, so the regex's first choice takes it at
 		// once. Decoded, it's all a, which only the slow second choice can try.
@@ -302,6 +310,17 @@ describe( 'when nothing matches', function() {
 		$matcher = make_matcher( [] );
 
 		expect( $matcher->match( 'GET', '/' ) )->toBe( [ 'status' => 404 ] );
+	} );
+
+	it( "returns 500 when finding a miss's group fails, so its before-files aren't skipped", function() {
+		$matcher = make_matcher( [ [ 'prefix' => '/x/{v:(?:a|aa)+}', 'before' => 'before.php', 'routes' => [ [ 'GET', '/page', 'page.php' ] ] ] ] );
+
+		$limit = ini_get( 'pcre.backtrack_limit' );
+		ini_set( 'pcre.backtrack_limit', '1000' );
+		$result = $matcher->match( 'GET', '/x/' . str_repeat( 'a', 40 ) . '!' );
+		ini_set( 'pcre.backtrack_limit', (string) $limit );
+
+		expect( $result )->toBe( [ 'status' => 500, 'error' => 'Backtrack limit exhausted' ] );
 	} );
 
 	it( 'returns 500 when preg_match fails', function() {

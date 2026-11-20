@@ -11,7 +11,15 @@ require __DIR__ . '/../../../../vendor/autoload.php';
 $options = json_decode( $_SERVER['HTTP_X_OPTIONS'] ?? '{}', true );
 $options += [ 'routes' => dirname( __DIR__ ) . '/routes.php', 'handlers' => dirname( __DIR__ ) . '/handlers' ];
 
-$tillkite = new Tillkite\App( $options );
+// Handlers get this subclass as $tillkite.
+final class Test_App extends Tillkite\App {
+	public function shout( string $text ) : string {
+		$shout = strtoupper( $text );
+		return $shout;
+	}
+}
+
+$tillkite = new Test_App( $options );
 foreach ( json_decode( $_SERVER['HTTP_X_SET'] ?? '{}', true ) as $name => $value ) {
 	$tillkite->$name = $value;
 }

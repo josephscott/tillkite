@@ -6,6 +6,7 @@ All notable changes to Tillkite are recorded here. The format follows [Keep a Ch
 
 ### Added
 
+- Tests that a miss's group is found even when PCRE fails, so its before-files run, that a before-file's redirect or `error()` replaces a 405 or 308 without its `Allow` or `Location`, that `HEAD` gets no body, and that handlers get the app's subclass.
 - A test that a site made by `new` keeps PHP's own settings under `php -S`, with errors on the page and session cookies that work over plain HTTP, for the developer.
 
 ## [0.1.0] - 2026-11-19
