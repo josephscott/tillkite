@@ -871,11 +871,12 @@ You need PHP 8.4 or later and Composer. `composer install` checks that PHP has t
 - `make bench` compares Tillkite's speed with other routers.
 - `make help` lists the rest.
 
-Four commands run in Docker, so they need nothing else installed. Any recent Docker should do, like Docker Desktop or OrbStack on a Mac, or Docker Engine on Linux:
+Five commands run in Docker, so they need nothing else installed. Any recent Docker should do, like Docker Desktop or OrbStack on a Mac, or Docker Engine on Linux:
 
-- `make matrix` runs what CI checks, on PHP 8.4 and 8.5, on Linux: lint, static analysis, the tests, with the php-fpm tests, and that `dist/tillkite.php` is up to date. It's the way to try a PHP version you don't have, and Linux's case-sensitive file names.
+- `make matrix` runs what CI checks, on PHP 8.4 and 8.5, on Linux: lint, static analysis, the tests, with the php-fpm tests and the ones that need root, and that `dist/tillkite.php` is up to date. It's the way to try a PHP version you don't have, and Linux's case-sensitive file names.
 - `make fpm` runs the tests that need nginx and php-fpm, which `make tests` skips: a site served as in production, where Tillkite reads the request without `$_SERVER`. `make matrix` runs them too. It uses PHP 8.5, and `make fpm PHP=8.4` picks another version.
 - `make apache` runs the tests that need Apache with PHP as its module, mod_php, as many hosts run it, behind the `.htaccess` in [Deploying](#deploying), which `make tests` skips too. It uses PHP 8.5, and `make apache PHP=8.4` picks another version.
+- `make root` runs the tests that need root, which `make tests` skips: that the route cache won't use a directory that belongs to another user. `make matrix` runs them too. It uses PHP 8.5, and `make root PHP=8.4` picks another version.
 - `make load` is the HTTP load test, with nginx, php-fpm and oha. It uses PHP 8.5, and `make load PHP=8.4` picks another version. It times each row for 30 seconds, about ten minutes in all, and `make load LOAD_SECONDS=5` makes each one shorter.
 
 They all work in a copy of the repository, so they never change your files. The first run builds an image for each PHP version and installs the Composer packages into a Docker volume. After that, they start in a few seconds. To remove them all:

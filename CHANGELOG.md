@@ -6,6 +6,7 @@ All notable changes to Tillkite are recorded here. The format follows [Keep a Ch
 
 ### Added
 
+- `make root` runs the tests that need root in Docker, so the test that the route cache won't use a directory that belongs to another user runs somewhere. `make matrix` and CI run it too.
 - Tests that a miss's group is found even when PCRE fails, so its before-files run, that a before-file's redirect or `error()` replaces a 405 or 308 without its `Allow` or `Location`, that `HEAD` gets no body, and that handlers get the app's subclass.
 - A test that a site made by `new` keeps PHP's own settings under `php -S`, with errors on the page and session cookies that work over plain HTTP, for the developer.
 

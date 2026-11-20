@@ -45,3 +45,6 @@ jobs:
 
     - name: Tests under Apache with mod_php, in Docker
       run: make apache PHP=${{ matrix.php-versions }}
+
+    - name: Tests that need root, in Docker
+      run: make root PHP=${{ matrix.php-versions }}

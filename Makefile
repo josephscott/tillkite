@@ -97,6 +97,13 @@ docker_run = docker run --rm -v "$(CURDIR)":/src:ro -v tillkite-vendor-$(1):/wor
 
 # The same for the image with Apache and mod_php, tagged tillkite-apache:VERSION.
 docker_apache_image = docker build -q --target apache --build-arg PHP_VERSION=$(1) -t tillkite-apache:$(1) docker > /dev/null
+# Runs a command as root, in the same image and copy. See make root.
+docker_root_run = $(call docker_run,$(1),--user root -e COMPOSER_ALLOW_SUPERUSER=1)
+
+# The tests that need root: the cache's check that its directory belongs to
+# the right user, which takes chown(). Against src/ and dist/tillkite.php.
+root_tests = sh -c 'php bin/dist.php > /dev/null && vendor/bin/pest tests/cache-tests.php && TILLKITE_DIST=1 vendor/bin/pest tests/cache-tests.php'
+
 docker_apache_run = docker run --rm -v "$(CURDIR)":/src:ro -v tillkite-vendor-$(1):/work/vendor $(2) tillkite-apache:$(1) /src/docker/run.sh
 
 .PHONY: load
@@ -123,11 +130,20 @@ apache: ## Tests under Apache with mod_php, in Docker, against src/ and dist/til
 	$(call docker_apache_run,$(PHP),-e TILLKITE_APACHE=1) sh -c 'php bin/dist.php > /dev/null && vendor/bin/pest tests/apache-tests.php && TILLKITE_DIST=1 vendor/bin/pest tests/apache-tests.php'
 	@echo
 
+.PHONY: root
+root: ## Tests that need root, in Docker, against src/ and dist/tillkite.php. PHP=8.4 picks the PHP version
+	@echo
+	@echo "--> Root: tests that need root, in Docker, on PHP $(PHP)"
+	$(call docker_image,$(PHP))
+	$(call docker_root_run,$(PHP)) $(root_tests)
+	@echo
+
 .PHONY: matrix
-matrix: ## Lint, analyze and test on each PHP version, in Docker, with the php-fpm tests
+matrix: ## Lint, analyze and test on each PHP version, in Docker, with the php-fpm tests and the ones that need root
 	@for version in $(PHP_VERSIONS); do \
 		echo; \
 		echo "--> Matrix: PHP $$version, in Docker"; \
-		$(call docker_image,$$version) && $(call docker_run,$$version) /src/docker/check.sh || exit 1; \
+		$(call docker_image,$$version) && $(call docker_run,$$version) /src/docker/check.sh \
+			&& $(call docker_root_run,$$version) $(root_tests) || exit 1; \
 	done
 	@echo
