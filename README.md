@@ -27,7 +27,7 @@ Without Composer, download [`dist/tillkite.php`](dist/tillkite.php), which is ev
 php tillkite.php new my-site
 ```
 
-Either way, you get a site with two pages, a layout [template](#templates), error pages, a before-file that sends security headers, and `init.php`, for what `public/index.php` and your scripts share. With the dist file, the site gets its own copy of it, in `lib/`. Give `new` a directory, or leave it out for the current one. It never overwrites a file or writes through a symlink: if any file it would make is already there, or a symlink is in place of one of them or of one of its directories, it lists them and writes nothing.
+Either way, you get a site with two pages, header and footer [templates](#templates), error pages, a before-file that sends security headers, and `init.php`, for what `public/index.php` and your scripts share. With the dist file, the site gets its own copy of it, in `lib/`. Give `new` a directory, or leave it out for the current one. It never overwrites a file or writes through a symlink: if any file it would make is already there, or a symlink is in place of one of them or of one of its directories, it lists them and writes nothing.
 
 ```
 my-site/
@@ -44,7 +44,8 @@ my-site/
 │   ├── 405.php
 │   └── 500.php         shows the error under php -S, and logs it elsewhere
 ├── templates/
-│   └── layout.php      the page around each page's content
+│   ├── header.php      the top of each page, up to <body>
+│   └── footer.php      the bottom of each page
 ├── var/                the route cache, writable by the web server
 └── lib/
     └── tillkite.php    with the dist file

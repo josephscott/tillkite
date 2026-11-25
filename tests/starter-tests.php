@@ -23,7 +23,7 @@ test( 'vendor/bin/tillkite new makes a site that answers its routes', function()
 
 	$home = http( $port, 'GET', '/' );
 	expect( $home['status'] )->toBe( 200 );
-	expect( $home['body'] )->toContain( '<title>It works</title>' );
+	expect( $home['body'] )->toContain( '<title>It works</title>' )->toEndWith( "</main>\n</body>\n</html>\n" );
 	expect( http( $port, 'GET', '/hello/Ada%20%3Cb%3E' )['body'] )->toContain( '<h1>Hello, Ada &lt;b&gt;</h1>' );
 	expect( http( $port, 'GET', '/style.css' )['body'] )->toContain( 'color-scheme' );
 

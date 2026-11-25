@@ -26,37 +26,38 @@ if ( $slug !== '' ) {
 	$month_url = "/blog/{$year}/{$month}";
 	$year_url = "/blog/{$year}";
 	$html .= '<p>More from <a href="' . Esc::url( $month_url ) . '">' . Esc::html( $month_url ) . '</a> and <a href="' . Esc::url( $year_url ) . '">' . Esc::html( $year_url ) . '</a>.</p>';
-	echo $tillkite->template( 'layout.php', [
-		'title' => $posts[$path],
-		'content' => $html,
-	] );
-	return;
-}
+	$title = $posts[$path];
+} else {
+	// The posts here are written in index.php, but a real site's would come
+	// from a database, where anyone who writes a post sets its title and
+	// URL, so they're escaped, the URL for an href and the title as text.
+	$list = '';
+	foreach ( $posts as $url => $post_title ) {
+		if ( str_starts_with( $url, $path . '/' ) ) {
+			$list .= '<li><a href="' . Esc::url( $url ) . '">' . Esc::html( $post_title ) . '</a></li>';
+		}
+	}
 
-// The posts here are written in index.php, but a real site's would come
-// from a database, where anyone who writes a post sets its title and URL,
-// so they're escaped, the URL for an href and the title as text.
-$list = '';
-foreach ( $posts as $url => $post_title ) {
-	if ( str_starts_with( $url, $path . '/' ) ) {
-		$list .= '<li><a href="' . Esc::url( $url ) . '">' . Esc::html( $post_title ) . '</a></li>';
+	if ( $list === '' ) {
+		$html .= '<p>No posts.</p>';
+	} else {
+		$html .= '<ul>' . $list . '</ul>';
+	}
+
+	$title = 'Blog';
+	if ( $month !== '' ) {
+		$title = 'Blog: ' . date( 'F Y', (int) mktime( 0, 0, 0, (int) $month, 1, (int) $year ) );
+	} elseif ( $year !== '' ) {
+		$title = 'Blog: ' . $year;
 	}
 }
 
-if ( $list === '' ) {
-	$html .= '<p>No posts.</p>';
-} else {
-	$html .= '<ul>' . $list . '</ul>';
-}
+echo $tillkite->template( 'header.php', [ 'title' => $title ] );
+?>
+<main>
+<h1><?= Esc::html( $title ) ?></h1>
+<?= $tillkite->template( 'route.php' ) ?>
+<?= $html ?>
 
-$title = 'Blog';
-if ( $month !== '' ) {
-	$title = 'Blog: ' . date( 'F Y', (int) mktime( 0, 0, 0, (int) $month, 1, (int) $year ) );
-} elseif ( $year !== '' ) {
-	$title = 'Blog: ' . $year;
-}
-
-echo $tillkite->template( 'layout.php', [
-	'title' => $title,
-	'content' => $html,
-] );
+</main>
+<?= $tillkite->template( 'footer.php' ) ?>

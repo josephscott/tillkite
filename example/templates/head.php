@@ -3,7 +3,7 @@ declare( strict_types = 1 );
 
 use Tillkite\Escape as Esc;
 
-// The page's <head>, which the layout runs with template(), with the page's
+// The page's <head>, which header.php runs with template(), with the page's
 // title, as plain text. The icon is inline, so browsers don't ask for
 // /favicon.ico, which would run the 404 page on every visit.
 ?>

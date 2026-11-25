@@ -4,6 +4,11 @@ All notable changes to Tillkite are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Changed
+
+- A site made by `new` has `templates/header.php` and `templates/footer.php` in place of `templates/layout.php`. Each handler runs the header before its content and the footer after it, and prints its own `<main>` and `<h1>`, so a page can take a different shape.
+- The example site does the same: each handler runs `templates/header.php` and `templates/footer.php` in place of `templates/layout.php`, and `templates/route.php` under its heading, for the route that matched. The stack trace is in the footer.
+
 ### Added
 
 - `make root` runs the tests that need root in Docker, so the test that the route cache won't use a directory that belongs to another user runs somewhere. `make matrix` and CI run it too.

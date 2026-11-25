@@ -104,7 +104,7 @@ class App {
 	// A hash of every file in src/, which make dist writes. It's part of the
 	// route cache's key, so code that compiles the routes differently, even
 	// between releases, never reads a cache that older code wrote.
-	private const string SOURCE_HASH = 'e47948518f7687e4a34778b3bbb2df9f';
+	private const string SOURCE_HASH = 'a328d923806ebe25c0381a17732d2d19';
 
 	// The errors that end a request without an exception, such as running
 	// out of memory or time, or an uncaught exception with no 500 file.

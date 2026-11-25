@@ -1,13 +1,26 @@
 <?php
 declare( strict_types = 1 );
 
-// The footer at the bottom of every page, which the layout runs with
-// template(). It shows the page's Server-Timing header, which index.php
-// turns on only in development, with a row for each
-// template the page ran, this one too. Browsers give the header to JavaScript
-// on the same origin, in a secure context: HTTPS, or http://localhost.
-// Another origin would also need a Timing-Allow-Origin header.
+use Tillkite\Escape as Esc;
+
+// The bottom of every page, which each handler runs with template() after
+// its content, to close what header.php opened. The 500 page passes the
+// exception, as error.
+//
+// In development, a Stack trace button shows how PHP got to this page, or
+// the exception's stack trace.
+//
+// Then it shows the page's Server-Timing header, which index.php turns on
+// only in development, with a row for each template the page ran, this one
+// too. Browsers give the header to JavaScript on the same origin, in a
+// secure context: HTTPS, or http://localhost. Another origin would also need
+// a Timing-Allow-Origin header.
 ?>
+<?php if ( development() ) : ?>
+<details class="trace"><summary>Stack trace</summary>
+<p>Shown only in development, under <code>php -S</code>.</p>
+<pre><?= Esc::html( (string) ( $data['error'] ?? stack_trace( debug_backtrace( DEBUG_BACKTRACE_IGNORE_ARGS ) ) ) ) ?></pre></details>
+<?php endif; ?>
 <footer>
 <h2>Server-Timing</h2>
 <p>How long Tillkite took to answer this request, in milliseconds, from the response's <code>Server-Timing</code> header. Your browser's developer tools show it too. Each bar compares a step with the longest one.</p>
@@ -51,3 +64,5 @@ if ( metrics.length > 0 ) {
 	document.getElementById( 'server-timing-missing' ).hidden = true;
 }
 </script>
+</body>
+</html>

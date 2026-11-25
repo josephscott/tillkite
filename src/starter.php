@@ -7,8 +7,8 @@ namespace Tillkite;
  * Makes a new site, for `vendor/bin/tillkite new my-site` with Composer, and
  * `php tillkite.php new my-site` with the dist file: init.php, for what the
  * front controller and any scripts share, a front controller,
- * routes, a layout template, two pages, a before-file that sends security
- * headers, and the 404, 405 and 500 pages. It never overwrites a file.
+ * routes, header and footer templates, two pages, a before-file that sends
+ * security headers, and the 404, 405 and 500 pages. It never overwrites a file.
  *
  * Only the command line uses it. Composer's autoloader loads it only then,
  * and in the dist file it's one more class.
@@ -29,8 +29,8 @@ final class Starter {
 		$usage = 'Usage: ' . $command . " new [directory]\n\n"
 			. "Makes a Tillkite site in the directory, or the current one: init.php,\n"
 			. "for what the web and scripts share, a front controller in public/,\n"
-			. "routes, a layout template, two pages, a before-file that sends\n"
-			. "security headers, and the 404, 405 and 500 pages. It never\n"
+			. "routes, header and footer templates, two pages, a before-file that\n"
+			. "sends security headers, and the 404, 405 and 500 pages. It never\n"
 			. "overwrites a file.\n";
 
 		$args = \array_slice( $argv, 1 );
@@ -362,15 +362,18 @@ final class Starter {
 				<?php
 				declare( strict_types = 1 );
 
-				// What a handler prints is the page. This one puts its content in the
-				// layout, templates/layout.php.
-				echo $tillkite->template( 'layout.php', [
-					'title' => 'It works',
-					'content' => <<<'HTML'
-						<p>This is your new Tillkite site. Each page is a file in <code>handlers/</code>, like this one, <code>handlers/home.php</code>, and <code>routes.php</code> says which URL runs which file. The page around it is <code>templates/layout.php</code>.</p>
-						<p>Try <a href="/hello/Ada">/hello/Ada</a>, whose route has a parameter.</p>
-						HTML,
-				] );
+				// What a handler prints is the page. This one prints the top of the page
+				// with templates/header.php, then its own content, then the bottom with
+				// templates/footer.php. A page that needs a different top or bottom can
+				// run other templates in their place.
+				echo $tillkite->template( 'header.php', [ 'title' => 'It works' ] );
+				?>
+				<main>
+				<h1>It works</h1>
+				<p>This is your new Tillkite site. Each page is a file in <code>handlers/</code>, like this one, <code>handlers/home.php</code>, and <code>routes.php</code> says which URL runs which file. The top and bottom of the page are <code>templates/header.php</code> and <code>templates/footer.php</code>, which each handler runs around its content.</p>
+				<p>Try <a href="/hello/Ada">/hello/Ada</a>, whose route has a parameter.</p>
+				</main>
+				<?= $tillkite->template( 'footer.php' ) ?>
 
 				TEMPLATE,
 			'handlers/hello.php' => <<<'TEMPLATE'
@@ -379,13 +382,17 @@ final class Starter {
 
 				use Tillkite\Escape as Esc;
 
-				// $params has the route's parameters, already decoded. The layout
+				// $params has the route's parameters, already decoded. The header
 				// escapes the title, but anything else from the URL needs escaping, like
 				// Esc::html() for text. Esc::html_attr() is for an attribute's value.
-				echo $tillkite->template( 'layout.php', [
-					'title' => 'Hello, ' . $params['name'],
-					'content' => '<p>From <code>handlers/hello.php</code>, for the route <code>/hello/{name}</code>, with <code>' . Esc::html( $params['name'] ) . '</code> as the name.</p>',
-				] );
+				$name = Esc::html( $params['name'] );
+				echo $tillkite->template( 'header.php', [ 'title' => 'Hello, ' . $params['name'] ] );
+				?>
+				<main>
+				<h1>Hello, <?= $name ?></h1>
+				<p>From <code>handlers/hello.php</code>, for the route <code>/hello/{name}</code>, with <code><?= $name ?></code> as the name.</p>
+				</main>
+				<?= $tillkite->template( 'footer.php' ) ?>
 
 				TEMPLATE,
 			'handlers/404.php' => <<<'TEMPLATE'
@@ -396,10 +403,13 @@ final class Starter {
 
 				// Runs when no route matches the URL. Tillkite has already set the
 				// status.
-				echo $tillkite->template( 'layout.php', [
-					'title' => 'Not found',
-					'content' => '<p>There\'s nothing at <code>' . Esc::html( $tillkite->uri() ) . '</code>.</p>',
-				] );
+				echo $tillkite->template( 'header.php', [ 'title' => 'Not found' ] );
+				?>
+				<main>
+				<h1>Not found</h1>
+				<p>There's nothing at <code><?= Esc::html( $tillkite->uri() ) ?></code>.</p>
+				</main>
+				<?= $tillkite->template( 'footer.php' ) ?>
 
 				TEMPLATE,
 			'handlers/405.php' => <<<'TEMPLATE'
@@ -410,10 +420,13 @@ final class Starter {
 
 				// Runs when a route matches the URL but not its method. Tillkite has
 				// already set the status and the Allow header.
-				echo $tillkite->template( 'layout.php', [
-					'title' => 'Method not allowed',
-					'content' => '<p>This URL doesn\'t take ' . Esc::html( $tillkite->method() ) . ' requests.</p>',
-				] );
+				echo $tillkite->template( 'header.php', [ 'title' => 'Method not allowed' ] );
+				?>
+				<main>
+				<h1>Method not allowed</h1>
+				<p>This URL doesn't take <?= Esc::html( $tillkite->method() ) ?> requests.</p>
+				</main>
+				<?= $tillkite->template( 'footer.php' ) ?>
 
 				TEMPLATE,
 			'handlers/500.php' => <<<'TEMPLATE'
@@ -426,43 +439,53 @@ final class Starter {
 				// the routes, which $error describes. It can reveal file paths and
 				// other details, so the page shows it only in development, under
 				// php -S. Elsewhere it goes to PHP's error log.
-				$html = '<p>Something went wrong.</p>';
+				$details = '';
 				if ( PHP_SAPI === 'cli-server' ) {
-					$html .= '<pre>' . Esc::html( (string) $error ) . '</pre>';
+					$details = '<pre>' . Esc::html( (string) $error ) . "</pre>\n";
 				} else {
 					error_log( Esc::log( (string) $error ) );
 				}
 
-				echo $tillkite->template( 'layout.php', [ 'title' => 'Server error', 'content' => $html ] );
+				echo $tillkite->template( 'header.php', [ 'title' => 'Server error' ] );
+				?>
+				<main>
+				<h1>Server error</h1>
+				<p>Something went wrong.</p>
+				<?= $details ?>
+				</main>
+				<?= $tillkite->template( 'footer.php' ) ?>
 
 				TEMPLATE,
-			'templates/layout.php' => <<<'TEMPLATE'
+			'templates/header.php' => <<<'TEMPLATE'
 				<?php
 				declare( strict_types = 1 );
 
 				use Tillkite\Escape as Esc;
 
-				// The page layout, which every handler runs with template(). In it,
-				// $data['title'] is plain text, and $data['content'] is HTML that's
-				// already escaped. The icon is empty, so browsers don't ask for
+				// The top of the page, up to <body>, which each handler runs with
+				// template() before its content. $data['title'] is plain text, for the
+				// page's <title>. The icon is empty, so browsers don't ask for
 				// /favicon.ico, which would run the 404 page.
-				$title = Esc::html( $data['title'] );
 				?>
 				<!doctype html>
 				<html lang="en">
 				<head>
 				<meta charset="utf-8">
 				<meta name="viewport" content="width=device-width, initial-scale=1">
-				<title><?= $title ?></title>
+				<title><?= Esc::html( $data['title'] ) ?></title>
 				<link rel="icon" href="data:,">
 				<link rel="stylesheet" href="/style.css">
 				</head>
 				<body>
-				<main>
-				<h1><?= $title ?></h1>
-				<?= $data['content'] ?>
 
-				</main>
+				TEMPLATE,
+			'templates/footer.php' => <<<'TEMPLATE'
+				<?php
+				declare( strict_types = 1 );
+
+				// The bottom of the page, which each handler runs with template() after
+				// its content, to close what templates/header.php opened.
+				?>
 				</body>
 				</html>
 

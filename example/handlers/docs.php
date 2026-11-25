@@ -17,7 +17,12 @@ if ( $file === null ) {
 
 // Open the path file() returned, not the name, so what's read is what it
 // checked. The file is Markdown, shown as text.
-echo $tillkite->template( 'layout.php', [
-	'title' => 'Docs: ' . $params['path'],
-	'content' => '<pre>' . Esc::html( (string) file_get_contents( $file ) ) . '</pre>',
-] );
+$title = 'Docs: ' . $params['path'];
+echo $tillkite->template( 'header.php', [ 'title' => $title ] );
+?>
+<main>
+<h1><?= Esc::html( $title ) ?></h1>
+<?= $tillkite->template( 'route.php' ) ?>
+<pre><?= Esc::html( (string) file_get_contents( $file ) ) ?></pre>
+</main>
+<?= $tillkite->template( 'footer.php' ) ?>

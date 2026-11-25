@@ -82,6 +82,6 @@ it( 'redirects to the URL without a trailing slash', function() {
 
 it( 'sends the Server-Timing header, with each template the page ran, and writes the route cache', function() {
 	expect( example_request( 'GET', '/' )['headers']['server-timing'] )
-		->toMatch( '{^tillkite-total;dur=[\d.]+, tillkite-route;dur=[\d.]+, tillkite-before;dur=[\d.]+, tillkite-handler;dur=[\d.]+, tillkite-template;desc="layout.php";dur=[\d.]+, tillkite-template;desc="head.php";dur=[\d.]+, tillkite-template;desc="header.php";dur=[\d.]+, tillkite-template;desc="nav.php";dur=[\d.]+, tillkite-template;desc="footer.php";dur=[\d.]+$}' );
+		->toMatch( '{^tillkite-total;dur=[\d.]+, tillkite-route;dur=[\d.]+, tillkite-before;dur=[\d.]+, tillkite-handler;dur=[\d.]+, tillkite-template;desc="header.php";dur=[\d.]+, tillkite-template;desc="head.php";dur=[\d.]+, tillkite-template;desc="nav.php";dur=[\d.]+, tillkite-template;desc="route.php";dur=[\d.]+, tillkite-template;desc="footer.php";dur=[\d.]+$}' );
 	expect( glob( dirname( __DIR__ ) . '/example/var/tillkite-*.php' ) )->toHaveCount( 1 );
 } );
